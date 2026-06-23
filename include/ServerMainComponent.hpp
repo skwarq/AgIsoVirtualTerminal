@@ -12,6 +12,8 @@
 #include "isobus/isobus/isobus_virtual_terminal_server.hpp"
 
 #include <filesystem>
+#include <map>
+#include <mutex>
 #include <set>
 
 class ServerMainComponent : public juce::Component
@@ -220,7 +222,6 @@ private:
 	void transferred_object_pool_parse_start(std::shared_ptr<isobus::VirtualTerminalServerManagedWorkingSet> &workingSet) const override;
 
 	void on_change_active_mask_callback(std::shared_ptr<isobus::VirtualTerminalServerManagedWorkingSet> affectedWorkingSet, std::uint16_t workingSet, std::uint16_t newMask);
-
 	/// @brief Restores the window position, size and maximised state which were saved the last
 	/// time the program ran.
 	/// @attention Like the always on top setting, this cannot be done during construction,
@@ -236,7 +237,10 @@ private:
 	/// @attention This cannot be done while this component is being constructed, because it is
 	/// not inside its window yet at that point.
 	void apply_always_on_top();
-
+	void on_change_soft_key_mask_callback(std::shared_ptr<isobus::VirtualTerminalServerManagedWorkingSet> affectedWorkingSet, std::uint16_t dataOrAlarmMask, std::uint16_t newSoftKeyMask);
+	void restore_saved_soft_key_masks(const std::shared_ptr<isobus::VirtualTerminalServerManagedWorkingSet> &workingSet);
+	void save_soft_key_masks(const std::vector<std::uint8_t> &versionLabel, isobus::NAME clientNAME);
+	std::filesystem::path soft_key_state_path(const std::vector<std::uint8_t> &versionLabel, isobus::NAME clientNAME) const;
 	void repaint_data_and_soft_key_mask();
 	bool is_active_alarm_mask() const;
 	void update_ack_button_visibility();
@@ -268,6 +272,13 @@ private:
 	std::vector<HeldButtonData> heldButtons;
 	std::set<std::string> loadedNames;
 	std::set<const isobus::VirtualTerminalServerManagedWorkingSet *> loadVersionResponsesSent;
+	using SoftKeyAssignments = std::map<std::uint16_t, std::uint16_t>;
+	std::map<std::uint64_t, SoftKeyAssignments> activeSoftKeyAssignments;
+	std::map<std::uint64_t, SoftKeyAssignments> pendingSoftKeyAssignments;
+	std::set<const isobus::VirtualTerminalServerManagedWorkingSet *> initializedSoftKeyStateWorkingSets;
+	std::mutex softKeyStateMutex;
+	isobus::EventCallbackHandle softKeyMaskChangeListener = 0;
+	bool softKeyMaskChangeListenerRegistered = false;
 	std::uint32_t alarmAckKeyMaskId = isobus::NULL_OBJECT_ID;
 	int alarmAckKeyCode = juce::KeyPress::escapeKey;
 	int displayScalePercent = 100; ///< How much the ISO render areas are magnified on screen, when not automatic
