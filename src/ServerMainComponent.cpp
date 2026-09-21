@@ -877,7 +877,10 @@ void ServerMainComponent::resized()
 	                            scaledDataMask.getY() + (scaledDataMask.getHeight() / 10),
 	                            scaledDataMask.getWidth() / 2,
 	                            (scaledDataMask.getHeight() / 10) * 8);
-	loggerViewport.setTopLeftPosition(0, minimum_height());
+	loggerViewport.setBounds(0,
+	                         minimum_height(),
+	                         getWidth(),
+	                         loggerViewport.isVisible() ? LoggerComponent::HEIGHT : 0);
 	menuBar.setBounds(lBounds.removeFromTop(lMenuBarHeight).withTrimmedRight(CAN_STATUS_INDICATOR_WIDTH));
 	logger.setSize(loggerViewport.getWidth(), logger.getHeight());
 
