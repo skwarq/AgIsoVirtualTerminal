@@ -1612,6 +1612,7 @@ void ServerMainComponent::LanguageCommandConfigClosed::operator()(int result) co
 				mParent.loggerViewport.setVisible(false);
 			}
 
+			mParent.apply_display_size();
 			mParent.saveIopBeforeParse = (mParent.popupMenu->getComboBoxComponent("Save IOP data before parsing")->getSelectedItemIndex() == 1);
 			mParent.save_settings();
 		}
