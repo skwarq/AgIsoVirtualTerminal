@@ -210,11 +210,13 @@ void convert_string_to_utf_8(SourceEncoding encoding, const std::string &input, 
 	{
 		std::uint16_t newCharacter = table[encodedChar];
 
-		if (((static_cast<std::uint8_t>(encodedChar) >= 0x7F) &&
-		     (static_cast<std::uint8_t>(encodedChar) <= 0xA0)) ||
-		    ((static_cast<std::uint8_t>(encodedChar) < 0x20) &&
-		     (0x0A != static_cast<std::uint8_t>(encodedChar)) &&
-		     (0x0D != static_cast<std::uint8_t>(encodedChar))))
+		const bool isControlCharacter =
+		  ((newCharacter <= 0x1F) &&
+		   (0x0A != newCharacter) &&
+		   (0x0D != newCharacter)) ||
+		  (newCharacter == 0x7F) ||
+		  ((newCharacter >= 0x80) && (newCharacter <= 0x9F));
+		if (isControlCharacter)
 		{
 			// We ignore the character because unsupported control characters are not supposed to take
 			// up any room in the presentation of a string

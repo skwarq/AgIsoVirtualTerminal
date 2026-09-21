@@ -20,6 +20,7 @@
 #endif
 #include "isobus/isobus/can_stack_logger.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <fstream>
 #include <iomanip>
@@ -38,6 +39,7 @@ std::string version_label_to_hex(const std::vector<std::uint8_t> &versionLabel)
 	}
 	return result.str();
 }
+
 } // namespace
 
 ServerMainComponent::ServerMainComponent(
@@ -341,6 +343,15 @@ std::vector<std::array<std::uint8_t, 7>> ServerMainComponent::get_versions(isobu
 	return retVal;
 }
 
+void ServerMainComponent::on_object_attribute_changed(isobus::NAME clientNAME, std::uint16_t objectID, std::uint8_t attributeID, std::uint32_t attributeData, std::optional<isobus::VirtualTerminalWorkingSetBase::IopObjectLocation> location)
+{
+	if (attributeID == 3 && attributeData <= 0xFF)
+	{
+		const std::lock_guard<std::mutex> lock(fontTypeChangesMutex);
+		pendingFontTypeChanges[clientNAME.get_full_name()][objectID] = static_cast<std::uint8_t>(attributeData);
+	}
+}
+
 std::vector<std::uint8_t> ServerMainComponent::get_supported_objects() const
 {
 	// These are defined by ISO 11783-6 Table A.1 "Virtual terminal objects"
@@ -349,6 +360,11 @@ std::vector<std::uint8_t> ServerMainComponent::get_supported_objects() const
 
 std::vector<std::uint8_t> ServerMainComponent::load_version(const std::vector<std::uint8_t> &versionLabel, isobus::NAME clientNAME)
 {
+	{
+		const std::lock_guard<std::mutex> lock(fontTypeChangesMutex);
+		pendingFontTypeChanges.erase(clientNAME.get_full_name());
+	}
+
 	std::ostringstream nameString;
 	std::vector<std::uint8_t> loadedIOPData;
 	std::vector<std::uint8_t> loadedVersionLabel(7);
@@ -363,11 +379,44 @@ std::vector<std::uint8_t> ServerMainComponent::load_version(const std::vector<st
 	     std::filesystem::exists(path + nameString.str())) &&
 	    (7 == versionLabel.size()))
 	{
+		std::vector<std::filesystem::path> iopxFiles;
 		for (const auto &entry : std::filesystem::directory_iterator(path + nameString.str()))
 		{
 			if (entry.path().has_extension() && entry.path().extension() == ".iopx")
 			{
-				std::ifstream iopxFile(entry.path(), std::ios::binary);
+				iopxFiles.push_back(entry.path());
+			}
+		}
+
+		// directory_iterator does not guarantee ordering. The files are individual IOP
+		// components and must be concatenated in the order in which they were stored.
+		std::sort(iopxFiles.begin(), iopxFiles.end(), [](const auto &left, const auto &right) {
+			const auto leftName = left.stem().string();
+			const auto rightName = right.stem().string();
+			const auto leftSeparator = leftName.find_last_of('_');
+			const auto rightSeparator = rightName.find_last_of('_');
+			if ((leftSeparator != std::string::npos) && (rightSeparator != std::string::npos))
+			{
+				try
+				{
+					const auto leftIndex = std::stoull(leftName.substr(leftSeparator + 1));
+					const auto rightIndex = std::stoull(rightName.substr(rightSeparator + 1));
+					if (leftIndex != rightIndex)
+					{
+						return leftIndex < rightIndex;
+					}
+				}
+				catch (const std::exception &)
+				{
+					// Fall back to a stable lexical order for unexpected filenames.
+				}
+			}
+			return left.string() < right.string();
+		});
+
+		for (const auto &filePath : iopxFiles)
+		{
+			std::ifstream iopxFile(filePath, std::ios::binary);
 
 				if (iopxFile.is_open())
 				{
@@ -389,13 +438,13 @@ std::vector<std::uint8_t> ServerMainComponent::load_version(const std::vector<st
 						if (versionMatches)
 						{
 							iopxFile.seekg(7, std::ios::beg);
-							loadedIOPData.insert(loadedIOPData.end(), std::istream_iterator<std::uint8_t>(iopxFile), std::istream_iterator<std::uint8_t>());
+							std::vector<std::uint8_t> componentData(std::istreambuf_iterator<char>(iopxFile), {});
+			loadedIOPData.insert(loadedIOPData.end(), componentData.begin(), componentData.end());
 						}
 					}
 				}
 			}
 		}
-	}
 
 	SoftKeyAssignments assignments;
 	const auto statePath = soft_key_state_path(versionLabel, clientNAME);
@@ -431,6 +480,28 @@ std::vector<std::uint8_t> ServerMainComponent::load_version(const std::vector<st
 bool ServerMainComponent::save_version(const std::vector<std::uint8_t> &objectPool, const std::vector<std::uint8_t> &versionLabel, isobus::NAME clientNAME)
 {
 	bool retVal = false;
+	std::vector<std::uint8_t> objectPoolToSave = objectPool;
+	{
+		const std::lock_guard<std::mutex> lock(fontTypeChangesMutex);
+		const auto clientChanges = pendingFontTypeChanges.find(clientNAME.get_full_name());
+		if (clientChanges != pendingFontTypeChanges.end())
+		{
+			for (std::size_t i = 0; i + 5 < objectPoolToSave.size(); ++i)
+			{
+				const auto objectID = static_cast<std::uint16_t>(objectPoolToSave[i]) |
+				  (static_cast<std::uint16_t>(objectPoolToSave[i + 1]) << 8);
+				if (objectPoolToSave[i + 2] != 23)
+				{
+					continue;
+				}
+				const auto change = clientChanges->second.find(objectID);
+				if (change != clientChanges->second.end())
+				{
+					objectPoolToSave[i + 5] = change->second;
+				}
+			}
+		}
+	}
 	std::string path = (getAppDataDir() +
 	                    File::getSeparatorString() +
 	                    String(ISO_DATA_PATH))
@@ -451,19 +522,54 @@ bool ServerMainComponent::save_version(const std::vector<std::uint8_t> &objectPo
 		std::filesystem::create_directory(path + "/" + nameString.str()); // create src folder
 	}
 
+	// A Store Version request may contain the same complete Object Pool more than once.
+	// Do not append an identical component for the same version label: loading all saved
+	// components later would parse the same objects repeatedly and can overwrite their state.
+	for (const auto &entry : std::filesystem::directory_iterator(path + "/" + nameString.str()))
+	{
+		if (!entry.path().has_extension() || entry.path().extension() != ".iopx")
+		{
+			continue;
+		}
+
+		std::ifstream existingFile(entry.path(), std::ios::binary);
+		if (!existingFile.is_open())
+		{
+			continue;
+		}
+
+		std::vector<std::uint8_t> existingVersionLabel(versionLabel.size());
+		existingFile.read(reinterpret_cast<char *>(existingVersionLabel.data()), static_cast<std::streamsize>(existingVersionLabel.size()));
+		if (existingFile.gcount() != static_cast<std::streamsize>(versionLabel.size()) || existingVersionLabel != versionLabel)
+		{
+			continue;
+		}
+
+		std::vector<std::uint8_t> existingObjectPool(std::istreambuf_iterator<char>(existingFile), {});
+		if (existingObjectPool.size() == objectPoolToSave.size() &&
+		    std::equal(existingObjectPool.begin(), existingObjectPool.end(), objectPoolToSave.begin(), [](std::uint8_t existingByte, std::uint8_t newByte) {
+			    return existingByte == newByte;
+		    }))
+		{
+			LOG_INFO("[VT Server]: Skipping duplicate Object Pool component %s for version %s", entry.path().filename().string().c_str(), version_label_to_hex(versionLabel).c_str());
+			save_soft_key_masks(versionLabel, clientNAME);
+			return true;
+		}
+	}
+
 	std::ofstream iopxFile(path + "/" + nameString.str() + "/object_pool_with_label_" + std::to_string(number_of_iop_files_in_directory(path + "/" + nameString.str())) + ".iopx", std::ios::trunc | std::ios::binary);
 	std::ofstream iopFile(path + "/" + nameString.str() + "/object_pool_" + std::to_string(number_of_iop_files_in_directory(path + "/" + nameString.str())) + ".iop", std::ios::trunc | std::ios::binary);
 
 	if (iopxFile.is_open())
 	{
 		iopxFile.write(reinterpret_cast<const char *>(versionLabel.data()), static_cast<std::streamsize>(versionLabel.size()));
-		iopxFile.write(reinterpret_cast<const char *>(objectPool.data()), static_cast<std::streamsize>(objectPool.size()));
+		iopxFile.write(reinterpret_cast<const char *>(objectPoolToSave.data()), static_cast<std::streamsize>(objectPoolToSave.size()));
 		iopxFile.close();
 		retVal = true;
 	}
 	if (iopFile.is_open())
 	{
-		iopFile.write(reinterpret_cast<const char *>(objectPool.data()), static_cast<std::streamsize>(objectPool.size()));
+		iopFile.write(reinterpret_cast<const char *>(objectPoolToSave.data()), static_cast<std::streamsize>(objectPoolToSave.size()));
 		iopFile.close();
 	}
 	if (retVal)

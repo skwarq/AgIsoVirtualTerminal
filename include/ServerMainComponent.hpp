@@ -54,6 +54,7 @@ public:
 	bool keyStateChanged(bool isKeyDown, juce::Component *originatingComponent) override;
 
 	std::vector<std::array<std::uint8_t, 7>> get_versions(isobus::NAME clientNAME) override;
+	void on_object_attribute_changed(isobus::NAME clientNAME, std::uint16_t objectID, std::uint8_t attributeID, std::uint32_t attributeData, std::optional<isobus::VirtualTerminalWorkingSetBase::IopObjectLocation> location) override;
 	std::vector<std::uint8_t> get_supported_objects() const override;
 
 	/// @brief This function is called when the client wants the server to load a previously stored object pool.
@@ -275,6 +276,8 @@ private:
 	using SoftKeyAssignments = std::map<std::uint16_t, std::uint16_t>;
 	std::map<std::uint64_t, SoftKeyAssignments> activeSoftKeyAssignments;
 	std::map<std::uint64_t, SoftKeyAssignments> pendingSoftKeyAssignments;
+	std::map<std::uint64_t, std::map<std::uint16_t, std::uint8_t>> pendingFontTypeChanges;
+	std::mutex fontTypeChangesMutex;
 	std::set<const isobus::VirtualTerminalServerManagedWorkingSet *> initializedSoftKeyStateWorkingSets;
 	std::mutex softKeyStateMutex;
 	isobus::EventCallbackHandle softKeyMaskChangeListener = 0;
