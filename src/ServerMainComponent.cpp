@@ -800,6 +800,7 @@ void ServerMainComponent::getAllCommands(juce::Array<juce::CommandID> &allComman
 	allCommands.add(static_cast<int>(CommandIDs::ClearISOData));
 	allCommands.add(static_cast<int>(CommandIDs::StartStop));
 	allCommands.add(static_cast<int>(CommandIDs::AutoStart));
+	allCommands.add(static_cast<int>(CommandIDs::AlwaysOnTop));
 #ifdef JUCE_WINDOWS
 	allCommands.add(static_cast<int>(CommandIDs::ConfigureCANHardware));
 #elif JUCE_LINUX
@@ -880,6 +881,12 @@ void ServerMainComponent::getCommandInfo(juce::CommandID commandID, ApplicationC
 		case CommandIDs::AutoStart:
 		{
 			result.setInfo("Auto-Start VT on launch", "Controls whether or not the VT automatically starts when the program is launched", "Control", autostart ? ApplicationCommandInfo::CommandFlags::isTicked : 0);
+		}
+		break;
+
+		case CommandIDs::AlwaysOnTop:
+		{
+			result.setInfo("Always on top", "Keeps the VT window in front of other windows", "Control", alwaysOnTop ? ApplicationCommandInfo::CommandFlags::isTicked : 0);
 		}
 		break;
 
@@ -1192,6 +1199,16 @@ bool ServerMainComponent::perform(const InvocationInfo &info)
 		}
 		break;
 
+		case static_cast<int>(CommandIDs::AlwaysOnTop):
+		{
+			alwaysOnTop = !alwaysOnTop;
+			apply_always_on_top();
+			mCommandManager.commandStatusChanged();
+			save_settings();
+			retVal = true;
+		}
+		break;
+
 		default:
 			break;
 	}
@@ -1213,6 +1230,7 @@ PopupMenu ServerMainComponent::getMenuForIndex(int index, const juce::String &)
 		{
 			retVal.addCommandItem(&mCommandManager, static_cast<int>(CommandIDs::StartStop));
 			retVal.addCommandItem(&mCommandManager, static_cast<int>(CommandIDs::AutoStart));
+			retVal.addCommandItem(&mCommandManager, static_cast<int>(CommandIDs::AlwaysOnTop));
 		}
 		break;
 
@@ -1270,6 +1288,19 @@ std::shared_ptr<isobus::ControlFunction> ServerMainComponent::get_client_control
 		}
 	}
 	return retVal;
+}
+
+void ServerMainComponent::apply_always_on_top()
+{
+	auto *topLevelComponent = getTopLevelComponent();
+
+	// While this component is being constructed it is not in a window yet, so it is its own top
+	// level component. Setting the flag on itself would do nothing.
+	if ((nullptr != topLevelComponent) && (topLevelComponent != this))
+	{
+		topLevelComponent->setAlwaysOnTop(alwaysOnTop);
+		needToApplyAlwaysOnTop = false;
+	}
 }
 
 void ServerMainComponent::change_selected_working_set(std::uint8_t index)
