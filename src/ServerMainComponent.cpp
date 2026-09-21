@@ -398,9 +398,10 @@ std::vector<std::uint8_t> ServerMainComponent::load_version(const std::vector<st
 	}
 
 	SoftKeyAssignments assignments;
+	const auto statePath = soft_key_state_path(versionLabel, clientNAME);
 	if (!loadedIOPData.empty())
 	{
-		std::ifstream stateFile(soft_key_state_path(versionLabel, clientNAME));
+		std::ifstream stateFile(statePath);
 		std::uint32_t dataOrAlarmMask = 0;
 		std::uint32_t softKeyMask = 0;
 		while (stateFile >> dataOrAlarmMask >> softKeyMask)
@@ -411,6 +412,7 @@ std::vector<std::uint8_t> ServerMainComponent::load_version(const std::vector<st
 			}
 		}
 	}
+	LOG_INFO("[VT] Loaded %zu Soft Key assignments from %s", assignments.size(), statePath.string().c_str());
 
 	{
 		const std::lock_guard<std::mutex> lock(softKeyStateMutex);
@@ -630,9 +632,10 @@ void ServerMainComponent::timerCallback()
 		{
 			ws->join_parsing_thread();
 
+			bool restoredSoftKeyMasks = false;
 			if (ws->get_was_object_pool_loaded_from_non_volatile_memory())
 			{
-				restore_saved_soft_key_masks(ws);
+				restoredSoftKeyMasks = restore_saved_soft_key_masks(ws);
 			}
 			else if (initializedSoftKeyStateWorkingSets.insert(ws.get()).second)
 			{
@@ -659,6 +662,11 @@ void ServerMainComponent::timerCallback()
 				// last drawn, until the working set is manually reselected.
 				ws->set_working_set_maintenance_message_timestamp_ms(isobus::SystemTiming::get_timestamp_ms());
 				change_selected_working_set(wsIndex);
+			}
+			if (restoredSoftKeyMasks && (activeWorkingSet == ws))
+			{
+				LOG_INFO("[VT] Rebuilding GUI after restoring Soft Key assignments");
+				repaint_data_and_soft_key_mask();
 			}
 
 			// A Load Version response is only valid for the initial pool restored
@@ -1840,8 +1848,15 @@ void ServerMainComponent::on_change_soft_key_mask_callback(std::shared_ptr<isobu
 {
 	if ((nullptr != affectedWorkingSet) && (nullptr != affectedWorkingSet->get_control_function()))
 	{
-		const std::lock_guard<std::mutex> lock(softKeyStateMutex);
-		activeSoftKeyAssignments[affectedWorkingSet->get_control_function()->get_NAME().get_full_name()][dataOrAlarmMask] = newSoftKeyMask;
+		const auto clientName = affectedWorkingSet->get_control_function()->get_NAME().get_full_name();
+		{
+			const std::lock_guard<std::mutex> lock(softKeyStateMutex);
+			activeSoftKeyAssignments[clientName][dataOrAlarmMask] = newSoftKeyMask;
+		}
+		LOG_INFO("[VT] ChangeSoftKeyMask: ECU NAME 0x%016llx, mask 0x%04x -> soft key mask 0x%04x",
+		         static_cast<unsigned long long>(clientName),
+		         static_cast<unsigned int>(dataOrAlarmMask),
+		         static_cast<unsigned int>(newSoftKeyMask));
 	}
 }
 
@@ -1862,37 +1877,48 @@ void ServerMainComponent::save_soft_key_masks(const std::vector<std::uint8_t> &v
 	{
 		std::error_code error;
 		std::filesystem::remove(statePath, error);
+		LOG_INFO("[VT] No Soft Key assignments to save for ECU NAME 0x%016llx; sidecar %s removed",
+		         static_cast<unsigned long long>(clientNAME.get_full_name()),
+		         statePath.string().c_str());
 		return;
 	}
 
 	std::ofstream stateFile(statePath, std::ios::trunc);
+	if (!stateFile.is_open())
+	{
+		LOG_ERROR("[VT] Cannot open Soft Key sidecar for writing: %s", statePath.string().c_str());
+		return;
+	}
 	for (const auto &[dataOrAlarmMask, softKeyMask] : assignments)
 	{
 		stateFile << dataOrAlarmMask << ' ' << softKeyMask << '\n';
 	}
+	LOG_INFO("[VT] Saved %zu Soft Key assignments to %s", assignments.size(), statePath.string().c_str());
 }
 
-void ServerMainComponent::restore_saved_soft_key_masks(const std::shared_ptr<isobus::VirtualTerminalServerManagedWorkingSet> &workingSet)
+bool ServerMainComponent::restore_saved_soft_key_masks(const std::shared_ptr<isobus::VirtualTerminalServerManagedWorkingSet> &workingSet)
 {
 	if ((nullptr == workingSet) || (nullptr == workingSet->get_control_function()))
 	{
-		return;
+		return false;
 	}
 
+	const auto clientName = workingSet->get_control_function()->get_NAME().get_full_name();
 	SoftKeyAssignments assignments;
 	{
-		const auto clientName = workingSet->get_control_function()->get_NAME().get_full_name();
 		const std::lock_guard<std::mutex> lock(softKeyStateMutex);
 		const auto state = pendingSoftKeyAssignments.find(clientName);
 		if (state == pendingSoftKeyAssignments.end())
 		{
-			return;
+			return false;
 		}
 		assignments = std::move(state->second);
 		pendingSoftKeyAssignments.erase(state);
 		activeSoftKeyAssignments[clientName] = assignments;
 	}
 
+	std::size_t restoredCount = 0;
+	std::size_t rejectedCount = 0;
 	for (const auto &[maskID, softKeyMaskID] : assignments)
 	{
 		auto mask = workingSet->get_object_by_id(maskID);
@@ -1902,6 +1928,11 @@ void ServerMainComponent::restore_saved_soft_key_masks(const std::shared_ptr<iso
 
 		if ((nullptr == mask) || !softKeyMaskExists)
 		{
+			++rejectedCount;
+			LOG_WARNING("[VT] Rejected Soft Key assignment for ECU NAME 0x%016llx: mask 0x%04x or Soft Key Mask 0x%04x does not exist",
+			            static_cast<unsigned long long>(clientName),
+			            static_cast<unsigned int>(maskID),
+			            static_cast<unsigned int>(softKeyMaskID));
 			continue;
 		}
 
@@ -1913,7 +1944,18 @@ void ServerMainComponent::restore_saved_soft_key_masks(const std::shared_ptr<iso
 		{
 			std::static_pointer_cast<isobus::AlarmMask>(mask)->set_soft_key_mask(softKeyMaskID);
 		}
+		else
+		{
+			++rejectedCount;
+			continue;
+		}
+		++restoredCount;
 	}
+	LOG_INFO("[VT] Restored %zu Soft Key assignments for ECU NAME 0x%016llx (%zu rejected)",
+	         restoredCount,
+	         static_cast<unsigned long long>(clientName),
+	         rejectedCount);
+	return restoredCount != 0;
 }
 
 void ServerMainComponent::repaint_data_and_soft_key_mask()
@@ -2455,6 +2497,13 @@ void ServerMainComponent::remove_working_set(std::shared_ptr<isobus::VirtualTerm
 {
 	loadVersionResponsesSent.erase(workingSetToRemove.get());
 	initializedSoftKeyStateWorkingSets.erase(workingSetToRemove.get());
+	if (nullptr != workingSetToRemove->get_control_function())
+	{
+		const auto clientName = workingSetToRemove->get_control_function()->get_NAME().get_full_name();
+		const std::lock_guard<std::mutex> lock(softKeyStateMutex);
+		activeSoftKeyAssignments.erase(clientName);
+		pendingSoftKeyAssignments.erase(clientName);
+	}
 	for (auto it = managedWorkingSetList.begin(); it != managedWorkingSetList.end(); it++)
 	{
 		if (workingSetToRemove == *it)

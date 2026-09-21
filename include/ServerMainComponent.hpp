@@ -238,7 +238,7 @@ private:
 	/// not inside its window yet at that point.
 	void apply_always_on_top();
 	void on_change_soft_key_mask_callback(std::shared_ptr<isobus::VirtualTerminalServerManagedWorkingSet> affectedWorkingSet, std::uint16_t dataOrAlarmMask, std::uint16_t newSoftKeyMask);
-	void restore_saved_soft_key_masks(const std::shared_ptr<isobus::VirtualTerminalServerManagedWorkingSet> &workingSet);
+	bool restore_saved_soft_key_masks(const std::shared_ptr<isobus::VirtualTerminalServerManagedWorkingSet> &workingSet);
 	void save_soft_key_masks(const std::vector<std::uint8_t> &versionLabel, isobus::NAME clientNAME);
 	std::filesystem::path soft_key_state_path(const std::vector<std::uint8_t> &versionLabel, isobus::NAME clientNAME) const;
 	void repaint_data_and_soft_key_mask();
