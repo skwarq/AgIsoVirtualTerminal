@@ -1763,52 +1763,58 @@ void ServerMainComponent::on_change_active_mask_callback(std::shared_ptr<isobus:
 		// per-object log/repaint traffic that made a callAsync-per-call too chatty in the
 		// logger), so deferring the whole handler to the UI thread asynchronously is both
 		// correct and cheap here.
-		juce::MessageManager::callAsync([this, affectedWorkingSet, newMask]() {
-			dataMaskRenderer.on_change_active_mask(activeWorkingSet);
-			softKeyMaskRenderer.on_change_active_mask(activeWorkingSet);
+		juce::Component::SafePointer<ServerMainComponent> safeThis(this);
+		juce::MessageManager::callAsync([safeThis, affectedWorkingSet, newMask]() {
+			if (safeThis == nullptr)
+			{
+				return;
+			}
+
+			safeThis->dataMaskRenderer.on_change_active_mask(safeThis->activeWorkingSet);
+			safeThis->softKeyMaskRenderer.on_change_active_mask(safeThis->activeWorkingSet);
 
 			auto activeMask = affectedWorkingSet->get_object_by_id(newMask);
 
-			if (activeWorkingSetDataMaskObjectID != newMask)
+			if (safeThis->activeWorkingSetDataMaskObjectID != newMask)
 			{
-				activeWorkingSetDataMaskObjectID = newMask;
+				safeThis->activeWorkingSetDataMaskObjectID = newMask;
 
-				if (send_status_message())
+				if (safeThis->send_status_message())
 				{
-					statusMessageTimestamp_ms = isobus::SystemTiming::get_timestamp_ms();
+					safeThis->statusMessageTimestamp_ms = isobus::SystemTiming::get_timestamp_ms();
 				}
 				else
 				{
-					statusMessageTimestamp_ms = 0;
+					safeThis->statusMessageTimestamp_ms = 0;
 				}
 			}
 
-			update_ack_button_visibility();
+			safeThis->update_ack_button_visibility();
 
 			if (nullptr != activeMask)
 			{
 				if (isobus::VirtualTerminalObjectType::AlarmMask == activeMask->get_object_type())
 				{
 					auto alarmMask = std::static_pointer_cast<isobus::AlarmMask>(activeMask);
-					activeWorkingSetSoftkeyMaskObjectID = alarmMask->get_soft_key_mask();
+					safeThis->activeWorkingSetSoftkeyMaskObjectID = alarmMask->get_soft_key_mask();
 
 					switch (alarmMask->get_signal_priority())
 					{
 						case isobus::AlarmMask::AcousticSignal::Highest:
 						{
-							mSoundPlayer.play(AlarmMaskAudio::alarmMaskHigh_mp3, AlarmMaskAudio::alarmMaskHigh_mp3Size);
+							safeThis->mSoundPlayer.play(AlarmMaskAudio::alarmMaskHigh_mp3, AlarmMaskAudio::alarmMaskHigh_mp3Size);
 						}
 						break;
 
 						case isobus::AlarmMask::AcousticSignal::Medium:
 						{
-							mSoundPlayer.play(AlarmMaskAudio::alarmMaskMedium_mp3, AlarmMaskAudio::alarmMaskMedium_mp3Size);
+							safeThis->mSoundPlayer.play(AlarmMaskAudio::alarmMaskMedium_mp3, AlarmMaskAudio::alarmMaskMedium_mp3Size);
 						}
 						break;
 
 						case isobus::AlarmMask::AcousticSignal::Lowest:
 						{
-							mSoundPlayer.play(AlarmMaskAudio::alarmMaskLow_mp3, AlarmMaskAudio::alarmMaskLow_mp3Size);
+							safeThis->mSoundPlayer.play(AlarmMaskAudio::alarmMaskLow_mp3, AlarmMaskAudio::alarmMaskLow_mp3Size);
 						}
 						break;
 
@@ -1816,16 +1822,16 @@ void ServerMainComponent::on_change_active_mask_callback(std::shared_ptr<isobus:
 						default:
 							break;
 					}
-					process_macro(activeMask, isobus::EventID::OnShow, isobus::VirtualTerminalObjectType::AlarmMask, activeWorkingSet);
-					process_macro(activeMask, isobus::EventID::OnChangeActiveMask, isobus::VirtualTerminalObjectType::AlarmMask, activeWorkingSet);
+					safeThis->process_macro(activeMask, isobus::EventID::OnShow, isobus::VirtualTerminalObjectType::AlarmMask, safeThis->activeWorkingSet);
+					safeThis->process_macro(activeMask, isobus::EventID::OnChangeActiveMask, isobus::VirtualTerminalObjectType::AlarmMask, safeThis->activeWorkingSet);
 				}
 				else if (isobus::VirtualTerminalObjectType::DataMask == activeMask->get_object_type())
 				{
 					auto dataMask = std::static_pointer_cast<isobus::DataMask>(activeMask);
-					activeWorkingSetSoftkeyMaskObjectID = dataMask->get_soft_key_mask();
+					safeThis->activeWorkingSetSoftkeyMaskObjectID = dataMask->get_soft_key_mask();
 					// Also process macros for the actual datamask (container) show event
-					process_macro(activeMask, isobus::EventID::OnShow, isobus::VirtualTerminalObjectType::DataMask, activeWorkingSet);
-					process_macro(activeMask, isobus::EventID::OnChangeActiveMask, isobus::VirtualTerminalObjectType::DataMask, activeWorkingSet);
+					safeThis->process_macro(activeMask, isobus::EventID::OnShow, isobus::VirtualTerminalObjectType::DataMask, safeThis->activeWorkingSet);
+					safeThis->process_macro(activeMask, isobus::EventID::OnChangeActiveMask, isobus::VirtualTerminalObjectType::DataMask, safeThis->activeWorkingSet);
 				}
 			}
 		});
