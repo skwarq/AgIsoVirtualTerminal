@@ -32,6 +32,7 @@ AgISOVirtualTerminalApplication::MainWindow::MainWindow(juce::String name,
 #else
 	canDrivers.push_back(std::make_shared<isobus::SocketCANInterface>("can0"));
 #endif
+	canDrivers.push_back(std::make_shared<TcpCANPlugin>("127.0.0.1", 29500));
 
 	jassert(!canDrivers.empty()); // You need some kind of CAN interface to run this program!
 	isobus::CANHardwareInterface::set_number_of_can_channels(1);
@@ -44,9 +45,6 @@ AgISOVirtualTerminalApplication::MainWindow::MainWindow(juce::String name,
 	config.set_number_of_packets_per_dpo_message(64);
 	config.set_number_of_packets_per_cts_message(255);
 
-#ifndef JUCE_WINDOWS
-	isobus::CANHardwareInterface::assign_can_channel_frame_handler(0, canDrivers.at(0));
-#endif
 	isobus::NAME serverNAME(0);
 
 	Settings settings;
@@ -108,7 +106,21 @@ void AgISOVirtualTerminalApplication::MainWindow::closeButtonPressed()
 	// This is called when the user tries to close this window. Here, we'll just
 	// ask the app to quit when this happens, but you can change this to do
 	// whatever you need.
-	isobus::CANHardwareInterface::stop();
+	for (const auto &driver : canDrivers)
+	{
+		if (auto tcpDriver = std::dynamic_pointer_cast<TcpCANPlugin>(driver))
+		{
+			tcpDriver->close();
+		}
+	}
+	if (isobus::CANHardwareInterface::is_running())
+	{
+		isobus::CANHardwareInterface::stop();
+	}
+	for (std::uint8_t channel = 0; channel < isobus::CANHardwareInterface::get_number_of_can_channels(); ++channel)
+	{
+		isobus::CANHardwareInterface::unassign_can_channel_frame_handler(channel);
+	}
 	JUCEApplication::getInstance()->systemRequestedQuit();
 }
 

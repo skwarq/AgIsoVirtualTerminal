@@ -9,6 +9,7 @@
 #include "ASCIILogFile.hpp"
 #include "AppImages.h"
 #include "ServerMainComponent.hpp"
+#include "TcpCANPlugin.hpp"
 #include "isobus/hardware_integration/can_hardware_interface.hpp"
 #include "isobus/isobus/can_internal_control_function.hpp"
 #include "isobus/isobus/can_network_manager.hpp"

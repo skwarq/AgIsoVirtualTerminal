@@ -12,9 +12,9 @@ ConfigureHardwareWindow::ConfigureHardwareWindow(ServerMainComponent &parentComp
   content(*this, canDrivers)
 {
 	setOpaque(true);
-	setSize(400, 280);
-	content.setSize(400, 280);
 	setContentNonOwned(&content, false);
+	setContentComponentSize(400, 390);
+	centreWithSize(400, 390);
 }
 
 void ConfigureHardwareWindow::closeButtonPressed()

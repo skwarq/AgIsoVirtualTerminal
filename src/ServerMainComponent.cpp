@@ -1342,7 +1342,7 @@ bool ServerMainComponent::perform(const InvocationInfo &info)
 		case static_cast<int>(CommandIDs::ConfigureCANHardware):
 		{
 			configureHardwareWindow = std::make_unique<ConfigureHardwareWindow>(*this, parentCANDrivers);
-			Rectangle<int> area(0, 0, 400, 280);
+			Rectangle<int> area(0, 0, 400, 390);
 			RectanglePlacement placement(RectanglePlacement::centred |
 			                             RectanglePlacement::doNotResize);
 			auto result = placement.appliedTo(area, Desktop::getInstance().getDisplays().getPrimaryDisplay()->userArea.reduced(20));
@@ -1358,6 +1358,9 @@ bool ServerMainComponent::perform(const InvocationInfo &info)
 			if (hasStartBeenCalled)
 			{
 				isobus::CANStackLogger::info("Stopping CAN interface");
+				// Stop GUI-driven CAN activity before tearing down the transport.
+				dataMaskRenderer.set_has_started(false);
+				hasStartBeenCalled = false;
 
 				// Save the frame handlers so we can re-add them after stopping the interface
 #ifdef JUCE_WINDOWS
@@ -1368,6 +1371,13 @@ bool ServerMainComponent::perform(const InvocationInfo &info)
 #else
 				auto canDriver = isobus::CANHardwareInterface::get_assigned_can_channel_frame_handler(0);
 #endif
+				for (const auto &driver : parentCANDrivers)
+				{
+					if (auto tcpDriver = std::dynamic_pointer_cast<TcpCANPlugin>(driver))
+					{
+						tcpDriver->close();
+					}
+				}
 
 				isobus::CANHardwareInterface::stop();
 
@@ -1381,8 +1391,6 @@ bool ServerMainComponent::perform(const InvocationInfo &info)
 				isobus::CANHardwareInterface::assign_can_channel_frame_handler(0, canDriver);
 #endif
 
-				dataMaskRenderer.set_has_started(false);
-				hasStartBeenCalled = false;
 			}
 			else if (nullptr == isobus::CANHardwareInterface::get_assigned_can_channel_frame_handler(0))
 			{
@@ -2206,27 +2214,49 @@ void ServerMainComponent::check_load_settings(std::shared_ptr<ValueTree> setting
 					displayScalePercent = juce::jlimit(100, 400, savedScale);
 				}
 			}
+			if (parentCANDrivers.size() > 1 && (!child.getProperty("TCPHost").isVoid() || !child.getProperty("TCPPort").isVoid()))
+			{
+				auto tcpDriver = std::static_pointer_cast<TcpCANPlugin>(parentCANDrivers.back());
+				auto host = child.getProperty("TCPHost").isVoid() ? String(tcpDriver->get_host()) : static_cast<String>(child.getProperty("TCPHost"));
+				auto port = child.getProperty("TCPPort").isVoid() ? tcpDriver->get_port() : static_cast<int>(child.getProperty("TCPPort"));
+				tcpDriver->reconfigure(host.toStdString(), static_cast<std::uint16_t>(juce::jlimit(1, 65535, port)));
+			}
+			if (!child.getProperty("CANDriver").isVoid())
+			{
+				auto index = static_cast<std::uint32_t>(static_cast<int>(child.getProperty("CANDriver")));
+				if (index < parentCANDrivers.size())
+				{
+					auto currentDriver = isobus::CANHardwareInterface::get_assigned_can_channel_frame_handler(0);
+					if (currentDriver != parentCANDrivers.at(index))
+					{
+						if (nullptr != currentDriver)
+						{
+							isobus::CANHardwareInterface::unassign_can_channel_frame_handler(0);
+						}
+						if (isobus::CANHardwareInterface::assign_can_channel_frame_handler(0, parentCANDrivers.at(index)))
+						{
+							auto selectedDriver = parentCANDrivers.at(index);
+							std::string message = "CAN driver selected from config: " + selectedDriver->get_name();
+							if (auto tcpDriver = std::dynamic_pointer_cast<TcpCANPlugin>(selectedDriver))
+							{
+								message += " (" + tcpDriver->get_host() + ":" + std::to_string(tcpDriver->get_port()) + ")";
+							}
+							isobus::CANStackLogger::info(message);
+						}
+					}
+				}
+			}
 #ifdef JUCE_WINDOWS
 			if (!child.getProperty("TouCANSerial").isVoid())
 			{
 				std::static_pointer_cast<isobus::TouCANPlugin>(parentCANDrivers.at(2))->reconfigure(0, static_cast<std::uint32_t>(static_cast<int>(child.getProperty("TouCANSerial"))));
 			}
 
-			if (!child.getProperty("CANDriver").isVoid())
-			{
-				auto index = static_cast<std::uint32_t>(static_cast<int>(child.getProperty("CANDriver")));
-
-				if (index < parentCANDrivers.size())
-				{
-					isobus::CANHardwareInterface::assign_can_channel_frame_handler(0, parentCANDrivers.at(index));
-					isobus::CANStackLogger::debug("CAN Driver selection loaded from config file.");
-				}
-			}
 #elif JUCE_LINUX
 			if (!child.getProperty("SocketCANInterface").isVoid())
 			{
 				std::static_pointer_cast<isobus::SocketCANInterface>(parentCANDrivers.at(0))->set_name(static_cast<String>(child.getProperty("SocketCANInterface")).toStdString());
-				isobus::CANStackLogger::info("Using Socket CAN interface name of: " + std::static_pointer_cast<isobus::SocketCANInterface>(parentCANDrivers.at(0))->get_device_name());
+				isobus::CANStackLogger::debug("Configured Socket CAN interface name: " + std::static_pointer_cast<isobus::SocketCANInterface>(parentCANDrivers.at(0))->get_device_name());
 			}
 			else
 			{
@@ -2294,6 +2324,19 @@ void ServerMainComponent::check_load_settings(std::shared_ptr<ValueTree> setting
 		child = settings->getChild(index);
 	}
 
+	// Assign the default non-Windows driver only after the saved driver selection has
+	// had a chance to load. This avoids occupying the channel before TCP can be
+	// restored from the settings file.
+#ifndef JUCE_WINDOWS
+	if (nullptr == isobus::CANHardwareInterface::get_assigned_can_channel_frame_handler(0) && !parentCANDrivers.empty())
+	{
+		if (isobus::CANHardwareInterface::assign_can_channel_frame_handler(0, parentCANDrivers.at(0)))
+		{
+			isobus::CANStackLogger::info("No saved CAN driver selected. Using " + parentCANDrivers.at(0)->get_name() + " as default.");
+		}
+	}
+#endif
+
 	update_ack_button_visibility();
 
 	if (!autostart)
@@ -2360,6 +2403,12 @@ void ServerMainComponent::save_settings()
 		hardwareSettings.setProperty("SoftKeyDesignatorHeight", softKeyMaskDimensions.keyHeight, nullptr);
 		hardwareSettings.setProperty("SoftkeyColumnCount", softKeyMaskDimensions.columnCount, nullptr);
 		hardwareSettings.setProperty("SoftkeyRowCount", softKeyMaskDimensions.rowCount, nullptr);
+		if (parentCANDrivers.size() > 1)
+		{
+			auto tcpDriver = std::static_pointer_cast<TcpCANPlugin>(parentCANDrivers.back());
+			hardwareSettings.setProperty("TCPHost", String(tcpDriver->get_host()), nullptr);
+			hardwareSettings.setProperty("TCPPort", static_cast<int>(tcpDriver->get_port()), nullptr);
+		}
 
 #ifdef JUCE_WINDOWS
 		hardwareSettings.setProperty("TouCANSerial", static_cast<int>(std::static_pointer_cast<isobus::TouCANPlugin>(parentCANDrivers.at(2))->get_serial_number()), nullptr);
