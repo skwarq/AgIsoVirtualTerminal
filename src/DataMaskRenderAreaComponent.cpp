@@ -330,7 +330,10 @@ void DataMaskRenderAreaComponent::mouseUp(const MouseEvent &event)
 						{
 							inputNumberModal.reset(new AlertWindow("Input Number", "Enter a value for this input number, then press OK.", MessageBoxIconType::QuestionIcon));
 
-							float scaledValue = (clickedNumber->get_value() + clickedNumber->get_offset()) * clickedNumber->get_scale();
+							const auto signedValue = [](std::uint32_t value) {
+								return static_cast<std::int32_t>(value);
+							};
+							float scaledValue = (signedValue(clickedNumber->get_value()) + clickedNumber->get_offset()) * clickedNumber->get_scale();
 							std::uint32_t currentRawValue = clickedNumber->get_value();
 
 							if (isobus::NULL_OBJECT_ID != clickedNumber->get_variable_reference())
@@ -341,7 +344,7 @@ void DataMaskRenderAreaComponent::mouseUp(const MouseEvent &event)
 								{
 									if (isobus::VirtualTerminalObjectType::NumberVariable == child->get_object_type())
 									{
-										scaledValue = (std::static_pointer_cast<isobus::NumberVariable>(child)->get_value() + clickedNumber->get_offset()) * clickedNumber->get_scale();
+										scaledValue = (signedValue(std::static_pointer_cast<isobus::NumberVariable>(child)->get_value()) + clickedNumber->get_offset()) * clickedNumber->get_scale();
 										currentRawValue = std::static_pointer_cast<isobus::NumberVariable>(child)->get_value();
 									}
 								}
@@ -350,8 +353,8 @@ void DataMaskRenderAreaComponent::mouseUp(const MouseEvent &event)
 							// A keypad rather than a slider, because an exact value cannot be hit by
 							// dragging a finger, especially over the ranges an input number can have
 							inputNumberKeypad.reset(new NumericKeypadComponent(scaledValue,
-							                                                   (static_cast<double>(clickedNumber->get_minimum_value()) + clickedNumber->get_offset()) * clickedNumber->get_scale(),
-							                                                   (static_cast<double>(clickedNumber->get_maximum_value()) + clickedNumber->get_offset()) * clickedNumber->get_scale(),
+								                                                   (static_cast<double>(signedValue(clickedNumber->get_minimum_value())) + clickedNumber->get_offset()) * clickedNumber->get_scale(),
+								                                                   (static_cast<double>(signedValue(clickedNumber->get_maximum_value())) + clickedNumber->get_offset()) * clickedNumber->get_scale(),
 							                                                   clickedNumber->get_number_of_decimals()));
 
 							inputNumberListener.set_target(clickedNumber);
@@ -362,7 +365,7 @@ void DataMaskRenderAreaComponent::mouseUp(const MouseEvent &event)
 							inputNumberModal->addCustomComponent(inputNumberKeypad.get());
 							inputNumberModal->addButton("OK", 0);
 							inputNumberModal->addButton("Cancel", 1); // TODO catch ESC as cancel
-							auto resultCallback = [this, clickedNumber](int result) {
+							auto resultCallback = [this, clickedNumber, signedValue](int result) {
 								this->inputNumberModal->exitModalState();
 
 								std::uint16_t varNumID = 0xFFFF;
@@ -374,9 +377,9 @@ void DataMaskRenderAreaComponent::mouseUp(const MouseEvent &event)
 									if ((nullptr != inputNumberKeypad) && (0 != clickedNumber->get_scale()))
 									{
 										const double rawValue = (inputNumberKeypad->get_value() / clickedNumber->get_scale()) - clickedNumber->get_offset();
-										const double clamped = std::min(std::max(rawValue, static_cast<double>(clickedNumber->get_minimum_value())),
-										                                static_cast<double>(clickedNumber->get_maximum_value()));
-										inputNumberListener.set_last_value(static_cast<std::uint32_t>(std::llround(clamped)));
+										const double clamped = std::min(std::max(rawValue, static_cast<double>(signedValue(clickedNumber->get_minimum_value()))),
+										                                static_cast<double>(signedValue(clickedNumber->get_maximum_value())));
+										inputNumberListener.set_last_value(static_cast<std::uint32_t>(static_cast<std::int32_t>(std::llround(clamped))));
 									}
 
 									ownerServer.process_macro(clickedNumber, isobus::EventID::OnEntryOfAValue, isobus::VirtualTerminalObjectType::InputNumber, parentWorkingSet);
