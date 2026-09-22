@@ -116,6 +116,31 @@ ConfigureHardwareComponent::ConfigureHardwareComponent(ConfigureHardwareWindow &
 	socketCANNameEditor.setSize(getWidth() - 20, 30);
 	socketCANNameEditor.setTopLeftPosition(10, 140);
 	addAndMakeVisible(socketCANNameEditor);
+#elif JUCE_ANDROID
+	hardwareInterfaceSelector.setName("Hardware Interface");
+	hardwareInterfaceSelector.setTextWhenNothingSelected("Select Hardware Interface");
+	hardwareInterfaceSelector.addItem("TCP (CanTcpGateway)", 1);
+	hardwareInterfaceSelector.setSelectedId(1, dontSendNotification);
+	hardwareInterfaceSelector.setSize(getWidth() - 20, 30);
+	hardwareInterfaceSelector.setTopLeftPosition(10, 80);
+	hardwareInterfaceSelector.onChange = [this]() {
+		tcpHostEditor.setVisible(true);
+		tcpPortEditor.setVisible(true);
+		repaint();
+	};
+	addAndMakeVisible(hardwareInterfaceSelector);
+	const auto tcpDriver = std::static_pointer_cast<TcpCANPlugin>(parentCANDrivers.front());
+	tcpHostEditor.setText(tcpDriver->get_host(), dontSendNotification);
+	tcpHostEditor.setSize(getWidth() - 20, 30);
+	tcpHostEditor.setTopLeftPosition(10, 140);
+	tcpHostEditor.setVisible(true);
+	addAndMakeVisible(tcpHostEditor);
+	tcpPortEditor.setText(std::to_string(tcpDriver->get_port()), dontSendNotification);
+	tcpPortEditor.setSize(getWidth() - 20, 30);
+	tcpPortEditor.setTopLeftPosition(10, 200);
+	tcpPortEditor.setInputFilter(new TextEditor::LengthAndCharacterRestriction(5, "1234567890"), true);
+	tcpPortEditor.setVisible(true);
+	addAndMakeVisible(tcpPortEditor);
 #endif
 	hardwareInterfaceSelector.onChange();
 	okButton.onClick = [this, &parent]() {
@@ -161,6 +186,16 @@ ConfigureHardwareComponent::ConfigureHardwareComponent(ConfigureHardwareWindow &
 			isobus::CANHardwareInterface::assign_can_channel_frame_handler(0, parentCANDrivers.at(0));
 			isobus::CANStackLogger::info("Updated socket CAN interface name to: " + socketCANNameEditor.getText().toStdString());
 		}
+#elif JUCE_ANDROID
+		if (hardwareInterfaceSelector.getSelectedId() == 1)
+		{
+			if (nullptr != isobus::CANHardwareInterface::get_assigned_can_channel_frame_handler(0))
+			{
+				isobus::CANHardwareInterface::unassign_can_channel_frame_handler(0);
+			}
+			isobus::CANHardwareInterface::assign_can_channel_frame_handler(0, parentCANDrivers.front());
+			isobus::CANStackLogger::info("Updated Android TCP CAN transport to " + tcpHostEditor.getText().toStdString() + ":" + tcpPortEditor.getText().toStdString());
+		}
 #endif
 		parent.parentServer.save_settings();
 		parent.exitModalState(1);
@@ -177,6 +212,8 @@ void ConfigureHardwareComponent::paint(Graphics &graphics)
 #ifdef JUCE_WINDOWS
 		graphics.drawFittedText("Select the CAN driver to use", 10, 10, bounds.getWidth() - 20, 54, Justification::centredTop, 3);
 #elif JUCE_LINUX
+	graphics.drawFittedText("Select and configure the CAN transport", 10, 10, bounds.getWidth() - 20, 54, Justification::centredTop, 3);
+#elif JUCE_ANDROID
 	graphics.drawFittedText("Select and configure the CAN transport", 10, 10, bounds.getWidth() - 20, 54, Justification::centredTop, 3);
 #endif
 
@@ -205,6 +242,10 @@ void ConfigureHardwareComponent::paint(Graphics &graphics)
 		graphics.drawFittedText("TCP Host", tcpHostEditor.getBounds().getX(), tcpHostEditor.getBounds().getY() - 14, tcpHostEditor.getBounds().getWidth(), 12, Justification::centredLeft, 1);
 		graphics.drawFittedText("TCP Port", tcpPortEditor.getBounds().getX(), tcpPortEditor.getBounds().getY() - 14, tcpPortEditor.getBounds().getWidth(), 12, Justification::centredLeft, 1);
 	}
+#elif JUCE_ANDROID
+	graphics.drawFittedText("Hardware Driver", hardwareInterfaceSelector.getBounds().getX(), hardwareInterfaceSelector.getBounds().getY() - 14, hardwareInterfaceSelector.getBounds().getWidth(), 12, Justification::centredLeft, 1);
+	graphics.drawFittedText("TCP Host", tcpHostEditor.getBounds().getX(), tcpHostEditor.getBounds().getY() - 14, tcpHostEditor.getBounds().getWidth(), 12, Justification::centredLeft, 1);
+	graphics.drawFittedText("TCP Port", tcpPortEditor.getBounds().getX(), tcpPortEditor.getBounds().getY() - 14, tcpPortEditor.getBounds().getWidth(), 12, Justification::centredLeft, 1);
 #endif
 }
 

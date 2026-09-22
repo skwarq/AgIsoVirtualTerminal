@@ -70,7 +70,7 @@ jobs:
         run: |
           mkdir build
           sudo apt update
-          sudo apt install libasound2-dev libjack-jackd2-dev ladspa-sdk libcurl4-openssl-dev libfreetype6-dev libx11-dev libxcomposite-dev libxcursor-dev libxcursor-dev libxext-dev libxinerama-dev libxrandr-dev libxrender-dev libwebkit2gtk-4.0-dev libglu1-mesa-dev mesa-common-dev
+          sudo apt install libasound2-dev libjack-jackd2-dev ladspa-sdk libcurl4-openssl-dev libfreetype6-dev libfontconfig1-dev libgtk-3-dev libx11-dev libxcomposite-dev libxcursor-dev libxext-dev libxinerama-dev libxrandr-dev libxrender-dev libwebkit2gtk-4.0-dev libglu1-mesa-dev mesa-common-dev
           cmake -S . -B build -DBUILD_EXAMPLES=OFF -DBUILD_TESTING=OFF -Wno-dev
           cmake --build build --config Release
           cd build
@@ -95,7 +95,7 @@ jobs:
         run: |
           mkdir build
           sudo apt update
-          sudo apt install libasound2-dev libjack-jackd2-dev ladspa-sdk libcurl4-openssl-dev libfreetype-dev libfontconfig1-dev libx11-dev libxcomposite-dev libxcursor-dev libxcursor-dev libxext-dev libxinerama-dev libxrandr-dev libxrender-dev libglu1-mesa-dev mesa-common-dev git cmake
+          sudo apt install libasound2-dev libjack-jackd2-dev ladspa-sdk libcurl4-openssl-dev libfreetype-dev libfontconfig1-dev libgtk-3-dev libx11-dev libxcomposite-dev libxcursor-dev libxext-dev libxinerama-dev libxrandr-dev libxrender-dev libglu1-mesa-dev mesa-common-dev git cmake
           cmake -S . -B build -DBUILD_EXAMPLES=OFF -DBUILD_TESTING=OFF -Wno-dev
           cmake --build build --config Release
           cd build
@@ -120,7 +120,7 @@ jobs:
         run: |
           mkdir build
           sudo apt update
-          sudo apt install libasound2-dev libjack-jackd2-dev ladspa-sdk libcurl4-openssl-dev libfreetype-dev libfontconfig1-dev libx11-dev libxcomposite-dev libxcursor-dev libxcursor-dev libxext-dev libxinerama-dev libxrandr-dev libxrender-dev libglu1-mesa-dev mesa-common-dev git cmake
+          sudo apt install libasound2-dev libjack-jackd2-dev ladspa-sdk libcurl4-openssl-dev libfreetype-dev libfontconfig1-dev libgtk-3-dev libx11-dev libxcomposite-dev libxcursor-dev libxext-dev libxinerama-dev libxrandr-dev libxrender-dev libglu1-mesa-dev mesa-common-dev git cmake
           cmake -S . -B build -DBUILD_EXAMPLES=OFF -DBUILD_TESTING=OFF -Wno-dev
           cmake --build build --config Release
           cd build
@@ -130,3 +130,60 @@ jobs:
         with:
           name: 'Ubuntu 26.04 deb package'
           path: build/_CPack_Packages/Linux/DEB/*.deb
+
+  android_release_build:
+    name: Android Release APK
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: android/AndroidStudio
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          fetch-tags: true
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+      - name: Install JUCE build dependencies
+        run: |
+          sudo apt-get update
+          # juceaide is a desktop JUCE helper even when the final target is Android.
+          # Keep its X11/GTK development headers available on the GitHub runner.
+          sudo apt-get install -y libgtk-3-dev libx11-dev libxrandr-dev libxcomposite-dev libxcursor-dev libxinerama-dev libxext-dev libxrender-dev libfreetype6-dev libfontconfig1-dev
+      - name: Install Android build tools
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;28.1.13356709" "cmake;3.22.1"
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+      - name: Configure desktop dependencies for the Android native build
+        working-directory: .
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+      - name: Generate git version source for the Android native build
+        working-directory: .
+        run: cmake --build build --target cmake_git_version_tracking --config Debug
+      - name: Create Android debug signing key
+        run: |
+          mkdir -p "$HOME/.android"
+          if [ ! -f "$HOME/.android/debug.keystore" ]; then
+            keytool -genkeypair -v \
+              -keystore "$HOME/.android/debug.keystore" \
+              -storepass android -keypass android \
+              -alias androiddebugkey \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+          test -f "$HOME/.android/debug.keystore"
+      - name: Build release APKs
+        run: gradle assembleRelease --no-daemon
+      - name: Upload Android release APKs
+        uses: actions/upload-artifact@v7
+        with:
+          name: AgIsoVirtualTerminal-Android-Release
+          path: android/AndroidStudio/app/build/outputs/apk/release_/release/*.apk

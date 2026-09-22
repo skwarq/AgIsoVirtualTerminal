@@ -29,10 +29,15 @@ AgISOVirtualTerminalApplication::MainWindow::MainWindow(juce::String name,
 	canDrivers.push_back(std::make_shared<isobus::SysTecWindowsPlugin>());
 #elif defined(JUCE_MAC)
 	canDrivers.push_back(std::make_shared<isobus::MacCANPCANPlugin>(PCAN_USBBUS1));
+#elif JUCE_ANDROID
+	// Android has no SocketCAN device. Use the TCP gateway as its CAN transport.
+	canDrivers.push_back(std::make_shared<TcpCANPlugin>("127.0.0.1", 29500));
 #else
 	canDrivers.push_back(std::make_shared<isobus::SocketCANInterface>("can0"));
 #endif
+#if !JUCE_ANDROID
 	canDrivers.push_back(std::make_shared<TcpCANPlugin>("127.0.0.1", 29500));
+#endif
 
 	jassert(!canDrivers.empty()); // You need some kind of CAN interface to run this program!
 	isobus::CANHardwareInterface::set_number_of_can_channels(1);

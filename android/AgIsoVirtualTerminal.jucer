@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<JUCERPROJECT id="agisovtandroid" name="AgIsoVirtualTerminalAndroid" projectType="guiapp"
+              version="1.5.1" bundleIdentifier="com.openagriculture.agisovirtualterminal"
+              companyName="Open-Agriculture" displaySplashScreen="0" enableIAA="0"
+              cppLanguageStandard="17" headerPath="../../include" jucerFormatVersion="1">
+  <MAINGROUP id="main" name="AgIsoVirtualTerminal">
+    <GROUP id="source" name="Source">
+      <FILE id="maincpp" name="Main.cpp" compile="1" resource="0" file="../src/Main.cpp"/>
+      <FILE id="server" name="ServerMainComponent.cpp" compile="1" resource="0"
+            file="../src/ServerMainComponent.cpp"/>
+      <FILE id="tcp" name="TcpCANPlugin.cpp" compile="1" resource="0" file="../src/TcpCANPlugin.cpp"/>
+      <FILE id="datamask" name="DataMaskComponent.cpp" compile="1" resource="0"
+            file="../src/DataMaskComponent.cpp"/>
+      <FILE id="workingset" name="WorkingSetSelectorComponent.cpp" compile="1"
+            resource="0" file="../src/WorkingSetSelectorComponent.cpp"/>
+      <FILE id="render" name="DataMaskRenderAreaComponent.cpp" compile="1"
+            resource="0" file="../src/DataMaskRenderAreaComponent.cpp"/>
+      <FILE id="softkey" name="SoftkeyMaskRenderArea.cpp" compile="1" resource="0"
+            file="../src/SoftkeyMaskRenderArea.cpp"/>
+      <FILE id="components" name="WorkingSetComponent.cpp" compile="1" resource="0"
+            file="../src/WorkingSetComponent.cpp"/>
+      <FILE id="settings" name="Settings.cpp" compile="1" resource="0" file="../src/Settings.cpp"/>
+      <FILE id="encoding" name="StringEncodingConversions.cpp" compile="1"
+            resource="0" file="../src/StringEncodingConversions.cpp"/>
+      <FILE id="logger" name="LoggerComponent.cpp" compile="1" resource="0"
+            file="../src/LoggerComponent.cpp"/>
+      <FILE id="images" name="AppImages.cpp" compile="1" resource="0" file="../src/AppImages.cpp"/>
+      <FILE id="ascii" name="ASCIILogFile.cpp" compile="1" resource="0" file="../src/ASCIILogFile.cpp"/>
+      <FILE id="configure" name="ConfigureHardwareComponent.cpp" compile="1"
+            resource="0" file="../src/ConfigureHardwareComponent.cpp"/>
+      <FILE id="window" name="ConfigureHardwareWindow.cpp" compile="1" resource="0"
+            file="../src/ConfigureHardwareWindow.cpp"/>
+      <FILE id="number" name="VT_NumberComponent.cpp" compile="1" resource="0"
+            file="../src/VT_NumberComponent.cpp"/>
+      <FILE id="keypad" name="NumericKeypadComponent.cpp" compile="1" resource="0"
+            file="../src/NumericKeypadComponent.cpp"/>
+    </GROUP>
+  </MAINGROUP>
+  <EXPORTFORMATS>
+    <ANDROIDSTUDIO targetFolder="AndroidStudio" minimumSDK="26" targetSDK="35" packageName="com.openagriculture.agisovirtualterminal"
+                   useAppCompat="1">
+      <CONFIGURATIONS>
+        <CONFIGURATION isDebug="1" name="Debug" targetName="AgIsoVirtualTerminalAndroid"/>
+        <CONFIGURATION isDebug="0" name="Release" targetName="AgIsoVirtualTerminalAndroid"/>
+      </CONFIGURATIONS>
+      <MODULEPATHS>
+        <MODULEPATH id="juce_gui_extra" path="../build/_deps/juce-src/modules"/>
+        <MODULEPATH id="juce_gui_basics" path="../build/_deps/juce-src/modules"/>
+        <MODULEPATH id="juce_graphics" path="../build/_deps/juce-src/modules"/>
+        <MODULEPATH id="juce_events" path="../build/_deps/juce-src/modules"/>
+        <MODULEPATH id="juce_data_structures" path="../build/_deps/juce-src/modules"/>
+        <MODULEPATH id="juce_core" path="../build/_deps/juce-src/modules"/>
+        <MODULEPATH id="juce_audio_basics" path="../build/_deps/juce-src/modules"/>
+        <MODULEPATH id="juce_audio_utils" path="../build/_deps/juce-src/modules"/>
+      </MODULEPATHS>
+    </ANDROIDSTUDIO>
+  </EXPORTFORMATS>
+  <MODULES>
+    <MODULE id="juce_core" showAllCode="1" useLocalCopy="0" includeBinaryInApp="1"/>
+    <MODULE id="juce_data_structures" showAllCode="1" useLocalCopy="0" includeBinaryInApp="1"/>
+    <MODULE id="juce_events" showAllCode="1" useLocalCopy="0" includeBinaryInApp="1"/>
+    <MODULE id="juce_graphics" showAllCode="1" useLocalCopy="0" includeBinaryInApp="1"/>
+    <MODULE id="juce_gui_basics" showAllCode="1" useLocalCopy="0" includeBinaryInApp="1"/>
+    <MODULE id="juce_gui_extra" showAllCode="1" useLocalCopy="0" includeBinaryInApp="1"/>
+    <MODULE id="juce_audio_basics" showAllCode="1" useLocalCopy="0" includeBinaryInApp="1"/>
+    <MODULE id="juce_audio_utils" showAllCode="1" useLocalCopy="0" includeBinaryInApp="1"/>
+  </MODULES>
+  <JUCEOPTIONS/>
+</JUCERPROJECT>

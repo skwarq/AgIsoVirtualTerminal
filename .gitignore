@@ -46,5 +46,11 @@ CMakeLists.txt.user*
 # QtCreator creates this folder
 CMakeFiles
 
+# Android/Gradle build output
+android/**/.gradle/
+android/**/build/
+android/**/local.properties
+android/**/.cxx/
+
 *.orig
 *.rej

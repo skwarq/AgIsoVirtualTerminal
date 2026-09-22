@@ -69,6 +69,14 @@ ServerMainComponent::ServerMainComponent(
 
 	check_load_settings(settings);
 
+#if JUCE_ANDROID
+	// Android has a fixed fullscreen viewport. Always fit the VT areas to it;
+	// the protocol dimensions remain unchanged.
+	automaticDisplayScale = true;
+	loggerViewport.setVisible(false);
+	logger.setVisible(false);
+#endif
+
 	if (languageCommandInterface.get_country_code().empty())
 	{
 		languageCommandInterface.set_country_code("US");
@@ -111,7 +119,14 @@ ServerMainComponent::ServerMainComponent(
 	setSize(juce::roundToInt(WorkingSetSelectorComponent::WIDTH * working_set_selector_scale()) + juce::roundToInt((get_data_mask_area_size_x_pixels() + softKeyMaskDimensions.total_width()) * display_scale()),
 	        minimum_height() + LoggerComponent::HEIGHT);
 
-	workingSetSelector.setTopLeftPosition(0, juce::LookAndFeel::getDefaultLookAndFeel().getDefaultMenuBarHeight());
+	int contentTop = juce::LookAndFeel::getDefaultLookAndFeel().getDefaultMenuBarHeight();
+#if JUCE_ANDROID
+	const auto *display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay();
+	contentTop += display->userArea.getY() - display->totalArea.getY();
+	if (contentTop == juce::LookAndFeel::getDefaultLookAndFeel().getDefaultMenuBarHeight())
+		contentTop += 32;
+#endif
+	workingSetSelector.setTopLeftPosition(0, contentTop);
 
 	logger.setTopLeftPosition(0, get_data_mask_area_size_y_pixels());
 	logger.setSize(getWidth(), LoggerComponent::HEIGHT);
@@ -728,7 +743,14 @@ void ServerMainComponent::timerCallback()
 	{
 		canAdapterConnected = isAdapterConnected;
 		canInterfaceRunning = isInterfaceRunning;
-		repaint(getWidth() - CAN_STATUS_INDICATOR_WIDTH, 0, CAN_STATUS_INDICATOR_WIDTH, juce::LookAndFeel::getDefaultLookAndFeel().getDefaultMenuBarHeight());
+		int statusTop = 0;
+#if JUCE_ANDROID
+		const auto *display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay();
+		statusTop = display->userArea.getY() - display->totalArea.getY();
+		if (statusTop == 0)
+			statusTop = 32;
+#endif
+		repaint(getWidth() - CAN_STATUS_INDICATOR_WIDTH, statusTop, CAN_STATUS_INDICATOR_WIDTH, juce::LookAndFeel::getDefaultLookAndFeel().getDefaultMenuBarHeight());
 	}
 
 	bool hasIopLoadInProgress = false;
@@ -923,7 +945,14 @@ void ServerMainComponent::paint(juce::Graphics &g)
 	// (Our component is opaque, so we must completely fill the background with a solid colour)
 	g.fillAll(getLookAndFeel().findColour(juce::ResizableWindow::backgroundColourId));
 
-	auto statusArea = juce::Rectangle<int>(getWidth() - CAN_STATUS_INDICATOR_WIDTH, 0, CAN_STATUS_INDICATOR_WIDTH, juce::LookAndFeel::getDefaultLookAndFeel().getDefaultMenuBarHeight());
+	int statusTop = 0;
+#if JUCE_ANDROID
+	const auto *display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay();
+	statusTop = display->userArea.getY() - display->totalArea.getY();
+	if (statusTop == 0)
+		statusTop = 32;
+#endif
+	auto statusArea = juce::Rectangle<int>(getWidth() - CAN_STATUS_INDICATOR_WIDTH, statusTop, CAN_STATUS_INDICATOR_WIDTH, juce::LookAndFeel::getDefaultLookAndFeel().getDefaultMenuBarHeight());
 	{
 		juce::Graphics::ScopedSaveState backgroundState(g);
 		g.setOrigin(statusArea.getPosition());
@@ -950,7 +979,15 @@ void ServerMainComponent::resized()
 	// This is called when the MainContentComponent is resized.
 	// If you add any child components, this is where you should
 	// update their positions.
-	auto lMenuBarHeight = juce::LookAndFeel::getDefaultLookAndFeel().getDefaultMenuBarHeight();
+	const auto menuBarHeight = juce::LookAndFeel::getDefaultLookAndFeel().getDefaultMenuBarHeight();
+	int topInset = 0;
+#if JUCE_ANDROID
+	const auto *display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay();
+	topInset = display->userArea.getY() - display->totalArea.getY();
+	if (topInset == 0)
+		topInset = 32;
+#endif
+	const auto lMenuBarHeight = menuBarHeight + topInset;
 	auto lBounds = getLocalBounds();
 
 	// The working-set picker and the two ISO areas keep the size they are natively laid out at,
@@ -965,21 +1002,29 @@ void ServerMainComponent::resized()
 	const int pickerLeft = juce::roundToInt(WorkingSetSelectorComponent::WIDTH * pickerScale);
 	const int dataMaskLeft = pickerLeft;
 	const int softKeyLeft = dataMaskLeft + juce::roundToInt(dataMaskWidth * scale);
+	const int totalLayoutWidth = softKeyLeft + juce::roundToInt(softKeyWidth * scale);
+	int systemRightInset = 0;
+#if JUCE_ANDROID
+	const auto *displayForLayout = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay();
+	systemRightInset = displayForLayout->totalArea.getRight() - displayForLayout->userArea.getRight();
+#endif
+	const int contentWidth = getWidth() - systemRightInset;
+	const int layoutLeft = juce::jmax(0, (contentWidth - totalLayoutWidth) / 2);
 
 	// The picker's own native height is derived from the scaled height it has to fill, rather
 	// than the other way around, so that it lines up with the mask areas beside it regardless of
 	// how far its own scale has been floored relative to theirs.
-	workingSetSelector.setBounds(0, lMenuBarHeight, WorkingSetSelectorComponent::WIDTH, juce::roundToInt((dataMaskHeight * scale) / pickerScale));
-	workingSetSelector.setTransform(juce::AffineTransform::scale(pickerScale, pickerScale, 0.0f, static_cast<float>(lMenuBarHeight)));
+	workingSetSelector.setBounds(layoutLeft, lMenuBarHeight, WorkingSetSelectorComponent::WIDTH, juce::roundToInt((dataMaskHeight * scale) / pickerScale));
+	workingSetSelector.setTransform(juce::AffineTransform::scale(pickerScale, pickerScale, static_cast<float>(layoutLeft), static_cast<float>(lMenuBarHeight)));
 
-	dataMaskRenderer.setBounds(dataMaskLeft, lMenuBarHeight, dataMaskWidth, dataMaskHeight);
-	dataMaskRenderer.setTransform(juce::AffineTransform::scale(scale, scale, static_cast<float>(dataMaskLeft), static_cast<float>(lMenuBarHeight)));
+	dataMaskRenderer.setBounds(layoutLeft + dataMaskLeft, lMenuBarHeight, dataMaskWidth, dataMaskHeight);
+	dataMaskRenderer.setTransform(juce::AffineTransform::scale(scale, scale, static_cast<float>(layoutLeft + dataMaskLeft), static_cast<float>(lMenuBarHeight)));
 
-	softKeyMaskRenderer.setBounds(softKeyLeft, lMenuBarHeight, softKeyWidth, dataMaskHeight);
-	softKeyMaskRenderer.setTransform(juce::AffineTransform::scale(scale, scale, static_cast<float>(softKeyLeft), static_cast<float>(lMenuBarHeight)));
+	softKeyMaskRenderer.setBounds(layoutLeft + softKeyLeft, lMenuBarHeight, softKeyWidth, dataMaskHeight);
+	softKeyMaskRenderer.setTransform(juce::AffineTransform::scale(scale, scale, static_cast<float>(layoutLeft + softKeyLeft), static_cast<float>(lMenuBarHeight)));
 
 	// This one is not part of a pool, so it is positioned against the magnified rectangle directly
-	const auto scaledDataMask = juce::Rectangle<int>(dataMaskLeft, lMenuBarHeight, juce::roundToInt(dataMaskWidth * scale), juce::roundToInt(dataMaskHeight * scale));
+	const auto scaledDataMask = juce::Rectangle<int>(layoutLeft + dataMaskLeft, lMenuBarHeight, juce::roundToInt(dataMaskWidth * scale), juce::roundToInt(dataMaskHeight * scale));
 	vtNumberComponent.setBounds(scaledDataMask.getX() + (scaledDataMask.getWidth() / 4),
 	                            scaledDataMask.getY() + (scaledDataMask.getHeight() / 10),
 	                            scaledDataMask.getWidth() / 2,
@@ -988,7 +1033,8 @@ void ServerMainComponent::resized()
 	                         minimum_height(),
 	                         getWidth(),
 	                         loggerViewport.isVisible() ? LoggerComponent::HEIGHT : 0);
-	menuBar.setBounds(lBounds.removeFromTop(lMenuBarHeight).withTrimmedRight(CAN_STATUS_INDICATOR_WIDTH));
+	menuBar.setBounds(0, topInset, getWidth(), menuBarHeight);
+	menuBar.setBounds(menuBar.getBounds().withTrimmedRight(CAN_STATUS_INDICATOR_WIDTH));
 	logger.setSize(loggerViewport.getWidth(), logger.getHeight());
 
 	if (logger.getHeight() < loggerViewport.getHeight())
@@ -1018,7 +1064,7 @@ void ServerMainComponent::getAllCommands(juce::Array<juce::CommandID> &allComman
 	allCommands.add(static_cast<int>(CommandIDs::AlwaysOnTop));
 #ifdef JUCE_WINDOWS
 	allCommands.add(static_cast<int>(CommandIDs::ConfigureCANHardware));
-#elif JUCE_LINUX
+#elif JUCE_LINUX || JUCE_ANDROID
 	allCommands.add(static_cast<int>(CommandIDs::ConfigureCANHardware));
 #endif
 }
@@ -1464,7 +1510,7 @@ PopupMenu ServerMainComponent::getMenuForIndex(int index, const juce::String &)
 
 #ifdef JUCE_WINDOWS
 			retVal.addCommandItem(&mCommandManager, static_cast<int>(CommandIDs::ConfigureCANHardware));
-#elif JUCE_LINUX
+#elif JUCE_LINUX || JUCE_ANDROID
 			retVal.addCommandItem(&mCommandManager, static_cast<int>(CommandIDs::ConfigureCANHardware));
 #endif
 		}
@@ -2229,7 +2275,7 @@ void ServerMainComponent::check_load_settings(std::shared_ptr<ValueTree> setting
 					displayScalePercent = juce::jlimit(100, 400, savedScale);
 				}
 			}
-			if (parentCANDrivers.size() > 1 && (!child.getProperty("TCPHost").isVoid() || !child.getProperty("TCPPort").isVoid()))
+			if (!parentCANDrivers.empty() && (!child.getProperty("TCPHost").isVoid() || !child.getProperty("TCPPort").isVoid()))
 			{
 				auto tcpDriver = std::static_pointer_cast<TcpCANPlugin>(parentCANDrivers.back());
 				auto host = child.getProperty("TCPHost").isVoid() ? String(tcpDriver->get_host()) : child.getProperty("TCPHost").toString();
@@ -2415,7 +2461,7 @@ void ServerMainComponent::save_settings()
 		hardwareSettings.setProperty("SoftKeyDesignatorHeight", softKeyMaskDimensions.keyHeight, nullptr);
 		hardwareSettings.setProperty("SoftkeyColumnCount", softKeyMaskDimensions.columnCount, nullptr);
 		hardwareSettings.setProperty("SoftkeyRowCount", softKeyMaskDimensions.rowCount, nullptr);
-		if (parentCANDrivers.size() > 1)
+		if (!parentCANDrivers.empty())
 		{
 			auto tcpDriver = std::static_pointer_cast<TcpCANPlugin>(parentCANDrivers.back());
 			hardwareSettings.setProperty("TCPHost", String(tcpDriver->get_host()), nullptr);
@@ -2649,8 +2695,22 @@ double ServerMainComponent::display_scale() const
 		return 1.0; // Before the component has been given a size there is nothing to fit to
 	}
 
-	const int availableWidth = getWidth() - WorkingSetSelectorComponent::WIDTH;
-	const int availableHeight = getHeight() -
+	int systemRightInset = 0;
+#if JUCE_ANDROID
+	const auto *displayForScale = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay();
+	systemRightInset = displayForScale->totalArea.getRight() - displayForScale->userArea.getRight();
+#endif
+	const int availableWidth = getWidth() - systemRightInset - WorkingSetSelectorComponent::WIDTH;
+	int topInset = 0;
+	int bottomInset = 0;
+#if JUCE_ANDROID
+	const auto *displayForHeight = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay();
+	topInset = displayForHeight->userArea.getY() - displayForHeight->totalArea.getY();
+	bottomInset = displayForHeight->totalArea.getBottom() - displayForHeight->userArea.getBottom();
+	if (topInset == 0)
+		topInset = 32;
+#endif
+	const int availableHeight = getHeight() - topInset - bottomInset -
 	  juce::LookAndFeel::getDefaultLookAndFeel().getDefaultMenuBarHeight() -
 	  (loggerViewport.isVisible() ? LoggerComponent::HEIGHT : 0);
 

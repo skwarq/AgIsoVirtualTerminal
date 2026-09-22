@@ -1,0 +1,30 @@
+plugins {
+    id "com.android.application"
+}
+
+android {
+    namespace "com.openagriculture.agisovirtualterminal"
+    compileSdk 35
+    ndkVersion "28.1.13356709"
+
+    defaultConfig {
+        applicationId "com.openagriculture.agisovirtualterminal"
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName "1.5.1"
+    }
+
+    externalNativeBuild {
+        cmake {
+            path "src/main/cpp/CMakeLists.txt"
+            version "3.22.1"
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+}
