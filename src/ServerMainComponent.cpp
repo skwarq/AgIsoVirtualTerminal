@@ -10,6 +10,7 @@
 #include "JuceManagedWorkingSetCache.hpp"
 #include "Main.hpp"
 #include "isobus/utility/system_timing.hpp"
+#include "isobus/isobus/can_network_manager.hpp"
 
 #include "SoftKeyMaskRenderAreaComponent.hpp"
 
@@ -1402,10 +1403,7 @@ bool ServerMainComponent::perform(const InvocationInfo &info)
 			}
 			else
 			{
-				isobus::CANStackLogger::info("Starting CAN interface");
-				isobus::CANHardwareInterface::start();
-				dataMaskRenderer.set_has_started(true);
-				hasStartBeenCalled = true;
+				start_can_interface();
 			}
 			mCommandManager.commandStatusChanged();
 			retVal = true;
@@ -2109,6 +2107,23 @@ void ServerMainComponent::update_ack_button_visibility()
 	workingSetSelector.set_ack_button_visible(showAckButton && is_active_alarm_mask());
 }
 
+bool ServerMainComponent::start_can_interface()
+{
+	isobus::CANStackLogger::info("Starting CAN interface");
+	if (!isobus::CANHardwareInterface::start())
+	{
+		isobus::CANStackLogger::error("Could not start CAN interface");
+		return false;
+	}
+
+	// Prompt connected ECUs to announce their current address claim after every start.
+	const bool requestSent = isobus::CANNetworkManager::CANNetwork.send_request_for_address_claim(0);
+	isobus::CANStackLogger::info("Requested CAN address claims after start (%s)", requestSent ? "sent" : "not sent");
+	dataMaskRenderer.set_has_started(true);
+	hasStartBeenCalled = true;
+	return true;
+}
+
 void ServerMainComponent::check_load_settings(std::shared_ptr<ValueTree> settings)
 {
 	int index = 0;
@@ -2217,7 +2232,7 @@ void ServerMainComponent::check_load_settings(std::shared_ptr<ValueTree> setting
 			if (parentCANDrivers.size() > 1 && (!child.getProperty("TCPHost").isVoid() || !child.getProperty("TCPPort").isVoid()))
 			{
 				auto tcpDriver = std::static_pointer_cast<TcpCANPlugin>(parentCANDrivers.back());
-				auto host = child.getProperty("TCPHost").isVoid() ? String(tcpDriver->get_host()) : static_cast<String>(child.getProperty("TCPHost"));
+				auto host = child.getProperty("TCPHost").isVoid() ? String(tcpDriver->get_host()) : child.getProperty("TCPHost").toString();
 				auto port = child.getProperty("TCPPort").isVoid() ? tcpDriver->get_port() : static_cast<int>(child.getProperty("TCPPort"));
 				tcpDriver->reconfigure(host.toStdString(), static_cast<std::uint16_t>(juce::jlimit(1, 65535, port)));
 			}
@@ -2255,7 +2270,7 @@ void ServerMainComponent::check_load_settings(std::shared_ptr<ValueTree> setting
 #elif JUCE_LINUX
 			if (!child.getProperty("SocketCANInterface").isVoid())
 			{
-				std::static_pointer_cast<isobus::SocketCANInterface>(parentCANDrivers.at(0))->set_name(static_cast<String>(child.getProperty("SocketCANInterface")).toStdString());
+				std::static_pointer_cast<isobus::SocketCANInterface>(parentCANDrivers.at(0))->set_name(child.getProperty("SocketCANInterface").toString().toStdString());
 				isobus::CANStackLogger::debug("Configured Socket CAN interface name: " + std::static_pointer_cast<isobus::SocketCANInterface>(parentCANDrivers.at(0))->get_device_name());
 			}
 			else
@@ -2303,10 +2318,7 @@ void ServerMainComponent::check_load_settings(std::shared_ptr<ValueTree> setting
 
 				if (autostart)
 				{
-					isobus::CANHardwareInterface::start();
-					dataMaskRenderer.set_has_started(true);
-					hasStartBeenCalled = true;
-					isobus::CANStackLogger::info("AutoStart enabled. Starting CAN hardware interface.");
+					start_can_interface();
 				}
 			}
 
