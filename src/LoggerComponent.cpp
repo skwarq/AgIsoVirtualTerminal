@@ -91,8 +91,6 @@ void LoggerComponent::sink_CAN_stack_log(LoggingLevel level, const std::string &
 	// isobus stack call, so it can't itself become a deadlock the way the isobus-internal
 	// mutexes could) and let pump_pending_messages(), called from ServerMainComponent's
 	// existing periodic timer, apply the whole backlog and repaint at most once per tick.
-	logMessage(logText);
-
 	const std::lock_guard<std::mutex> lock(pendingMessagesMutex);
 	pendingMessages.push_back({ logText, level });
 }
@@ -113,6 +111,7 @@ void LoggerComponent::pump_pending_messages()
 
 	for (auto it = drained.rbegin(); it != drained.rend(); ++it)
 	{
+		logMessage(it->logText);
 		loggedMessages.push_front(*it);
 	}
 
