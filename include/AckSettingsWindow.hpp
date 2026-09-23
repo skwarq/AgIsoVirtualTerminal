@@ -8,15 +8,14 @@
 //================================================================================================
 #pragma once
 
-#include "JuceHeader.h"
+#include "ResponsiveDialogWindow.hpp"
 
-class AckSettingsWindow : public juce::AlertWindow
+class AckSettingsWindow : public ResponsiveDialogWindow
   , public juce::KeyListener
 {
 public:
 	AckSettingsWindow(int alarmAckKeyCode, bool showAckButton, Component *associatedComponent = nullptr);
 
-	void resized() override;
 	bool keyPressed(const juce::KeyPress &key, juce::Component *originatingComponent) override;
 	int alarmAckKeyCode() const;
 	bool shouldShowAckButton() const;

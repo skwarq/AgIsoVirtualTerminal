@@ -23,6 +23,8 @@ public:
 	void paint(Graphics &graphics) override;
 
 	void resized() override;
+	juce::Point<int> preferredSize() const;
+	bool applyConfiguration();
 
 private:
 	ComboBox hardwareInterfaceSelector;
@@ -30,8 +32,8 @@ private:
 	TextEditor tcpHostEditor;
 	TextEditor tcpPortEditor;
 	TextEditor touCANSerialEditor;
-	TextButton okButton;
 	std::vector<std::shared_ptr<isobus::CANHardwarePlugin>> &parentCANDrivers;
+	ConfigureHardwareWindow &parentWindow;
 
 	JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ConfigureHardwareComponent)
 };

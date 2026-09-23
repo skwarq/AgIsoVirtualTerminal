@@ -19,11 +19,11 @@ NumericKeypadComponent::NumericKeypadComponent(double initialValue,
 	entry = String(initialValue, static_cast<int>(decimals));
 
 	entryLabel.setJustificationType(Justification::centredRight);
-	entryLabel.setFont(Font(34.0f, Font::bold));
+	entryLabel.setFont(Font(FontOptions{}.withHeight(34.0f).withStyle("Bold")));
 	addAndMakeVisible(entryLabel);
 
 	rangeLabel.setJustificationType(Justification::centredRight);
-	rangeLabel.setFont(Font(13.0f));
+	rangeLabel.setFont(Font(FontOptions{}.withHeight(13.0f)));
 	rangeLabel.setText("Range " + String(minimum, static_cast<int>(decimals)) +
 	                     " to " + String(maximum, static_cast<int>(decimals)),
 	                   dontSendNotification);

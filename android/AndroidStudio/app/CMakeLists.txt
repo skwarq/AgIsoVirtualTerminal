@@ -52,6 +52,8 @@ add_library( ${BINARY_NAME}
 
     SHARED
 
+    "../../../src/ResponsiveAlertWindow.cpp"
+    "../../../src/ResponsiveDialogWindow.cpp"
     "../../../src/Main.cpp"
     "../../../src/ServerMainComponent.cpp"
     "../../../src/TcpCANPlugin.cpp"

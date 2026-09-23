@@ -3,6 +3,10 @@
 #include "ConfigureHardwareWindow.hpp"
 #include "DataMaskRenderAreaComponent.hpp"
 #include "LoggerComponent.hpp"
+#include "ResponsiveAlertWindow.hpp"
+#include "ResponsiveDialogWindow.hpp"
+
+class AckSettingsWindow;
 #include "SoftKeyMaskComponent.hpp"
 #include "SoftKeyMaskRenderAreaComponent.hpp"
 #include "VT_NumberComponent.hpp"
@@ -251,6 +255,8 @@ private:
 	void clear_iso_data();
 
 	static constexpr int CAN_STATUS_INDICATOR_WIDTH = 150;
+	juce::Rectangle<int> canStatusArea() const;
+	juce::String canStatusText() const;
 	const std::string ISO_DATA_PATH = "iso_data";
 	std::string screenCaptureDirArgument = "";
 	std::string canLogPath;
@@ -267,7 +273,13 @@ private:
 	AudioDeviceManager mAudioDeviceManager;
 	std::unique_ptr<isobus::TimeDateInterface> timeServingInterface;
 	std::unique_ptr<isobus::DiagnosticProtocol> diagnosticProtocol;
-	std::unique_ptr<AlertWindow> popupMenu;
+	std::unique_ptr<ResponsiveAlertWindow> popupMenu;
+	std::unique_ptr<ResponsiveDialogWindow> aboutDialog;
+	std::unique_ptr<AckSettingsWindow> ackSettingsDialog;
+	std::unique_ptr<ResponsiveDialogWindow> languageDialog;
+	std::unique_ptr<ResponsiveDialogWindow> versionDialog;
+	std::unique_ptr<ResponsiveDialogWindow> capabilitiesDialog;
+	std::unique_ptr<ResponsiveDialogWindow> loggingDialog;
 	std::unique_ptr<ConfigureHardwareWindow> configureHardwareWindow;
 	std::shared_ptr<isobus::ControlFunction> alarmAckKeyWs;
 	std::vector<std::shared_ptr<isobus::CANHardwarePlugin>> &parentCANDrivers;

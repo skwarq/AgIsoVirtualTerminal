@@ -10,15 +10,14 @@
 #define CONFIGURE_HARDWARE_WINDOW_HPP
 
 #include "ConfigureHardwareComponent.hpp"
+#include "ResponsiveDialogWindow.hpp"
 
 class ServerMainComponent;
 
-class ConfigureHardwareWindow : public DocumentWindow
+class ConfigureHardwareWindow : public ResponsiveDialogWindow
 {
 public:
 	ConfigureHardwareWindow(ServerMainComponent &parentComponent, std::vector<std::shared_ptr<isobus::CANHardwarePlugin>> &canDrivers);
-
-	void closeButtonPressed() override;
 
 	ServerMainComponent &parentServer;
 

@@ -13,17 +13,20 @@
 
 #ifdef JUCE_WINDOWS
 #include "isobus/hardware_integration/toucan_vscp_canal.hpp"
-#elif JUCE_LINUX
+#elif JUCE_LINUX && !JUCE_ANDROID
 #include "isobus/hardware_integration/socket_can_interface.hpp"
 #endif
 
 ConfigureHardwareComponent::ConfigureHardwareComponent(ConfigureHardwareWindow &parent, std::vector<std::shared_ptr<isobus::CANHardwarePlugin>> &canDrivers) :
-  okButton("OK"),
-  parentCANDrivers(canDrivers)
+  parentCANDrivers(canDrivers),
+  parentWindow(parent)
 {
-	setSize(400, 390);
-	okButton.setSize(100, 30);
-	addAndMakeVisible(okButton);
+	setOpaque(false);
+	hardwareInterfaceSelector.setJustificationType(Justification::centred);
+	socketCANNameEditor.setFont(Font(FontOptions{}.withHeight(16.0f)));
+	tcpHostEditor.setFont(Font(FontOptions{}.withHeight(16.0f)));
+	tcpPortEditor.setFont(Font(FontOptions{}.withHeight(16.0f)));
+	touCANSerialEditor.setFont(Font(FontOptions{}.withHeight(16.0f)));
 
 #ifdef JUCE_WINDOWS
 	hardwareInterfaceSelector.setName("Hardware Interface");
@@ -46,8 +49,6 @@ ConfigureHardwareComponent::ConfigureHardwareComponent(ConfigureHardwareWindow &
 		}
 	}
 	hardwareInterfaceSelector.setSelectedId(selectedID);
-	hardwareInterfaceSelector.setSize(getWidth() - 20, 30);
-	hardwareInterfaceSelector.setTopLeftPosition(10, 80);
 	hardwareInterfaceSelector.onChange = [this]() {
 		if (3 == hardwareInterfaceSelector.getSelectedId())
 		{
@@ -66,13 +67,9 @@ ConfigureHardwareComponent::ConfigureHardwareComponent(ConfigureHardwareWindow &
 
 	auto tcpDriver = std::static_pointer_cast<TcpCANPlugin>(parentCANDrivers.back());
 	tcpHostEditor.setText(tcpDriver->get_host(), dontSendNotification);
-	tcpHostEditor.setSize(getWidth() - 20, 30);
-	tcpHostEditor.setTopLeftPosition(10, 140);
 	tcpHostEditor.setVisible(false);
 	addChildComponent(tcpHostEditor);
 	tcpPortEditor.setText(std::to_string(tcpDriver->get_port()), dontSendNotification);
-	tcpPortEditor.setSize(getWidth() - 20, 30);
-	tcpPortEditor.setTopLeftPosition(10, 200);
 	tcpPortEditor.setInputFilter(new TextEditor::LengthAndCharacterRestriction(5, "1234567890"), true);
 	tcpPortEditor.setVisible(false);
 	addChildComponent(tcpPortEditor);
@@ -80,17 +77,13 @@ ConfigureHardwareComponent::ConfigureHardwareComponent(ConfigureHardwareWindow &
 	auto inputFilter = new TextEditor::LengthAndCharacterRestriction(10, "1234567890");
 	touCANSerialEditor.setName("TouCAN Serial Number");
 	touCANSerialEditor.setText(isobus::to_string(std::static_pointer_cast<isobus::TouCANPlugin>(parentCANDrivers.at(2))->get_serial_number()));
-	touCANSerialEditor.setSize(getWidth() - 20, 30);
-	touCANSerialEditor.setTopLeftPosition(10, 140);
 	touCANSerialEditor.setInputFilter(inputFilter, true);
 	addChildComponent(touCANSerialEditor);
-#elif JUCE_LINUX
+#elif JUCE_LINUX && !JUCE_ANDROID
 	hardwareInterfaceSelector.setName("Hardware Interface");
 	hardwareInterfaceSelector.setTextWhenNothingSelected("Select Hardware Interface");
 	hardwareInterfaceSelector.addItemList({ "SocketCAN", "TCP (CanTcpGateway)" }, 1);
 	hardwareInterfaceSelector.setSelectedId(parentCANDrivers.at(0) == isobus::CANHardwareInterface::get_assigned_can_channel_frame_handler(0) ? 1 : 2);
-	hardwareInterfaceSelector.setSize(getWidth() - 20, 30);
-	hardwareInterfaceSelector.setTopLeftPosition(10, 80);
 	hardwareInterfaceSelector.onChange = [this]() {
 		const bool tcpSelected = hardwareInterfaceSelector.getSelectedId() == static_cast<int>(parentCANDrivers.size());
 		tcpHostEditor.setVisible(tcpSelected);
@@ -101,28 +94,20 @@ ConfigureHardwareComponent::ConfigureHardwareComponent(ConfigureHardwareWindow &
 	addAndMakeVisible(hardwareInterfaceSelector);
 	const auto tcpDriver = std::static_pointer_cast<TcpCANPlugin>(parentCANDrivers.back());
 	tcpHostEditor.setText(tcpDriver->get_host(), dontSendNotification);
-	tcpHostEditor.setSize(getWidth() - 20, 30);
-	tcpHostEditor.setTopLeftPosition(10, 140);
 	tcpHostEditor.setVisible(false);
 	addChildComponent(tcpHostEditor);
 	tcpPortEditor.setText(std::to_string(tcpDriver->get_port()), dontSendNotification);
-	tcpPortEditor.setSize(getWidth() - 20, 30);
-	tcpPortEditor.setTopLeftPosition(10, 200);
 	tcpPortEditor.setInputFilter(new TextEditor::LengthAndCharacterRestriction(5, "1234567890"), true);
 	tcpPortEditor.setVisible(false);
 	addChildComponent(tcpPortEditor);
 	socketCANNameEditor.setName("SocketCAN Interface Name");
 	socketCANNameEditor.setText(std::static_pointer_cast<isobus::SocketCANInterface>(parentCANDrivers.at(0))->get_device_name());
-	socketCANNameEditor.setSize(getWidth() - 20, 30);
-	socketCANNameEditor.setTopLeftPosition(10, 140);
 	addAndMakeVisible(socketCANNameEditor);
 #elif JUCE_ANDROID
 	hardwareInterfaceSelector.setName("Hardware Interface");
 	hardwareInterfaceSelector.setTextWhenNothingSelected("Select Hardware Interface");
 	hardwareInterfaceSelector.addItem("TCP (CanTcpGateway)", 1);
 	hardwareInterfaceSelector.setSelectedId(1, dontSendNotification);
-	hardwareInterfaceSelector.setSize(getWidth() - 20, 30);
-	hardwareInterfaceSelector.setTopLeftPosition(10, 80);
 	hardwareInterfaceSelector.onChange = [this]() {
 		tcpHostEditor.setVisible(true);
 		tcpPortEditor.setVisible(true);
@@ -131,26 +116,29 @@ ConfigureHardwareComponent::ConfigureHardwareComponent(ConfigureHardwareWindow &
 	addAndMakeVisible(hardwareInterfaceSelector);
 	const auto tcpDriver = std::static_pointer_cast<TcpCANPlugin>(parentCANDrivers.front());
 	tcpHostEditor.setText(tcpDriver->get_host(), dontSendNotification);
-	tcpHostEditor.setSize(getWidth() - 20, 30);
-	tcpHostEditor.setTopLeftPosition(10, 140);
 	tcpHostEditor.setVisible(true);
 	addAndMakeVisible(tcpHostEditor);
 	tcpPortEditor.setText(std::to_string(tcpDriver->get_port()), dontSendNotification);
-	tcpPortEditor.setSize(getWidth() - 20, 30);
-	tcpPortEditor.setTopLeftPosition(10, 200);
 	tcpPortEditor.setInputFilter(new TextEditor::LengthAndCharacterRestriction(5, "1234567890"), true);
 	tcpPortEditor.setVisible(true);
 	addAndMakeVisible(tcpPortEditor);
 #endif
 	hardwareInterfaceSelector.onChange();
-	okButton.onClick = [this, &parent]() {
+	const auto initialSize = preferredSize();
+	setSize(initialSize.x, initialSize.y);
+	/* The dialog owns the OK/Cancel buttons; this component only owns the form. */
+	/* Configuration is applied through applyConfiguration(). */
+	}
+
+bool ConfigureHardwareComponent::applyConfiguration()
+	{
 		if (hardwareInterfaceSelector.getSelectedId() == static_cast<int>(parentCANDrivers.size()))
 		{
 			const auto port = tcpPortEditor.getText().getIntValue();
 			if (tcpHostEditor.getText().isEmpty() || port < 1 || port > 65535)
 			{
 				AlertWindow::showMessageBoxAsync(AlertWindow::WarningIcon, "Invalid TCP settings", "Enter a host and a port between 1 and 65535.");
-				return;
+				return false;
 			}
 			std::static_pointer_cast<TcpCANPlugin>(parentCANDrivers.back())->reconfigure(tcpHostEditor.getText().toStdString(), static_cast<std::uint16_t>(port));
 		}
@@ -167,7 +155,7 @@ ConfigureHardwareComponent::ConfigureHardwareComponent(ConfigureHardwareWindow &
 		}
 		isobus::CANHardwareInterface::assign_can_channel_frame_handler(0, parentCANDrivers.at(hardwareInterfaceSelector.getSelectedId() - 1));
 		isobus::CANStackLogger::info("Updated assigned CAN driver.");
-#elif JUCE_LINUX
+#elif JUCE_LINUX && !JUCE_ANDROID
 		if (hardwareInterfaceSelector.getSelectedId() == 2)
 		{
 			if (nullptr != isobus::CANHardwareInterface::get_assigned_can_channel_frame_handler(0))
@@ -197,27 +185,18 @@ ConfigureHardwareComponent::ConfigureHardwareComponent(ConfigureHardwareWindow &
 			isobus::CANStackLogger::info("Updated Android TCP CAN transport to " + tcpHostEditor.getText().toStdString() + ":" + tcpPortEditor.getText().toStdString());
 		}
 #endif
-		parent.parentServer.save_settings();
-		parent.exitModalState(1);
-		parent.setVisible(false);
-	};
+		parentWindow.parentServer.save_settings();
+		return true;
 }
 
 void ConfigureHardwareComponent::paint(Graphics &graphics)
 {
 	auto bounds = getLocalBounds();
-	graphics.fillAll(getLookAndFeel().findColour(juce::ResizableWindow::backgroundColourId));
 	graphics.setColour(getLookAndFeel().findColour(Label::textColourId));
 	graphics.setFont(16.0f);
-#ifdef JUCE_WINDOWS
-		graphics.drawFittedText("Select the CAN driver to use", 10, 10, bounds.getWidth() - 20, 54, Justification::centredTop, 3);
-#elif JUCE_LINUX
-	graphics.drawFittedText("Select and configure the CAN transport", 10, 10, bounds.getWidth() - 20, 54, Justification::centredTop, 3);
-#elif JUCE_ANDROID
-	graphics.drawFittedText("Select and configure the CAN transport", 10, 10, bounds.getWidth() - 20, 54, Justification::centredTop, 3);
-#endif
+	graphics.drawFittedText("Select and configure the CAN transport", 10, 10, bounds.getWidth() - 20, 54, Justification::centredTop, 1);
 
-	graphics.setFont(12.0f);
+	graphics.setFont(Font(FontOptions{}.withHeight(16.0f)));
 
 #ifdef JUCE_WINDOWS
 	graphics.drawFittedText("Hardware Driver", hardwareInterfaceSelector.getBounds().getX(), hardwareInterfaceSelector.getBounds().getY() - 14, hardwareInterfaceSelector.getBounds().getWidth(), 12, Justification::centredLeft, 1);
@@ -231,7 +210,7 @@ void ConfigureHardwareComponent::paint(Graphics &graphics)
 		graphics.drawFittedText("TCP Host", tcpHostEditor.getBounds().getX(), tcpHostEditor.getBounds().getY() - 14, tcpHostEditor.getBounds().getWidth(), 12, Justification::centredLeft, 1);
 		graphics.drawFittedText("TCP Port", tcpPortEditor.getBounds().getX(), tcpPortEditor.getBounds().getY() - 14, tcpPortEditor.getBounds().getWidth(), 12, Justification::centredLeft, 1);
 	}
-#elif JUCE_LINUX
+#elif JUCE_LINUX && !JUCE_ANDROID
 	graphics.drawFittedText("Hardware Driver", hardwareInterfaceSelector.getBounds().getX(), hardwareInterfaceSelector.getBounds().getY() - 14, hardwareInterfaceSelector.getBounds().getWidth(), 12, Justification::centredLeft, 1);
 	if (hardwareInterfaceSelector.getSelectedId() == 1)
 	{
@@ -251,5 +230,42 @@ void ConfigureHardwareComponent::paint(Graphics &graphics)
 
 void ConfigureHardwareComponent::resized()
 {
-	okButton.setCentrePosition(getWidth() / 2, getHeight() - 30);
+	const int fieldWidth = juce::jmax(80, getWidth() - 20);
+	const int rowSpacing = ResponsiveDialogWindow::dialogFieldSpacing + 16;
+	int nextY = 56;
+	hardwareInterfaceSelector.setBounds(10, nextY, fieldWidth, ResponsiveDialogWindow::dialogFieldHeight);
+	nextY += ResponsiveDialogWindow::dialogFieldHeight + rowSpacing;
+
+#ifdef JUCE_WINDOWS
+	if (touCANSerialEditor.isVisible()) { touCANSerialEditor.setBounds(10, nextY, fieldWidth, ResponsiveDialogWindow::dialogFieldHeight); nextY += ResponsiveDialogWindow::dialogFieldHeight + rowSpacing; }
+	if (tcpHostEditor.isVisible()) { tcpHostEditor.setBounds(10, nextY, fieldWidth, ResponsiveDialogWindow::dialogFieldHeight); nextY += ResponsiveDialogWindow::dialogFieldHeight + rowSpacing; }
+	if (tcpPortEditor.isVisible()) { tcpPortEditor.setBounds(10, nextY, fieldWidth, ResponsiveDialogWindow::dialogFieldHeight); }
+#elif JUCE_LINUX && !JUCE_ANDROID
+	if (socketCANNameEditor.isVisible()) { socketCANNameEditor.setBounds(10, nextY, fieldWidth, ResponsiveDialogWindow::dialogFieldHeight); nextY += ResponsiveDialogWindow::dialogFieldHeight + rowSpacing; }
+	if (tcpHostEditor.isVisible()) { tcpHostEditor.setBounds(10, nextY, fieldWidth, ResponsiveDialogWindow::dialogFieldHeight); nextY += ResponsiveDialogWindow::dialogFieldHeight + rowSpacing; }
+	if (tcpPortEditor.isVisible()) { tcpPortEditor.setBounds(10, nextY, fieldWidth, ResponsiveDialogWindow::dialogFieldHeight); }
+#elif JUCE_ANDROID
+	tcpHostEditor.setBounds(10, nextY, fieldWidth, ResponsiveDialogWindow::dialogFieldHeight); nextY += ResponsiveDialogWindow::dialogFieldHeight + rowSpacing;
+	tcpPortEditor.setBounds(10, nextY, fieldWidth, ResponsiveDialogWindow::dialogFieldHeight);
+#endif
+
+}
+
+juce::Point<int> ConfigureHardwareComponent::preferredSize() const
+{
+	int rows = 1;
+#ifdef JUCE_WINDOWS
+	rows += touCANSerialEditor.isVisible() ? 1 : 0;
+	rows += tcpHostEditor.isVisible() ? 1 : 0;
+	rows += tcpPortEditor.isVisible() ? 1 : 0;
+#elif JUCE_LINUX && !JUCE_ANDROID
+	rows += socketCANNameEditor.isVisible() ? 1 : 0;
+	rows += tcpHostEditor.isVisible() ? 1 : 0;
+	rows += tcpPortEditor.isVisible() ? 1 : 0;
+#elif JUCE_ANDROID
+	rows += 2;
+#endif
+	const int rowHeight = ResponsiveDialogWindow::dialogFieldHeight + ResponsiveDialogWindow::dialogFieldSpacing + 16;
+	const int lastFieldEnd = 56 + rows * rowHeight - 30;
+	return { 400, lastFieldEnd + ResponsiveDialogWindow::contentToButtonGap };
 }

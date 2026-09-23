@@ -13,6 +13,8 @@
 #include "isobus/isobus/isobus_virtual_terminal_server_managed_working_set.hpp"
 
 #include "NumericKeypadComponent.hpp"
+#include "ResponsiveDialogWindow.hpp"
+#include "ResponsiveAlertWindow.hpp"
 
 #include "JuceHeader.h"
 
@@ -62,9 +64,9 @@ private:
 	static bool isClickWithinBounds(int clickXRelative, int clickYRelative, int objectX, int objectY, int objectWidth, int objectHeight);
 
 	std::shared_ptr<isobus::VirtualTerminalServerManagedWorkingSet> parentWorkingSet;
-	std::unique_ptr<AlertWindow> inputListModal;
-	std::unique_ptr<AlertWindow> inputNumberModal;
-	std::unique_ptr<AlertWindow> inputStringModal;
+	std::unique_ptr<ResponsiveAlertWindow> inputListModal;
+	std::unique_ptr<ResponsiveDialogWindow> inputNumberModal;
+	std::unique_ptr<ResponsiveDialogWindow> inputStringModal;
 	std::unique_ptr<NumericKeypadComponent> inputNumberKeypad;
 	std::vector<std::shared_ptr<Component>> childComponents;
 	std::vector<std::shared_ptr<Component>> currentModalComponentCache;

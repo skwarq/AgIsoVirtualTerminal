@@ -7,18 +7,12 @@
 #include "ConfigureHardwareWindow.hpp"
 
 ConfigureHardwareWindow::ConfigureHardwareWindow(ServerMainComponent &parentComponent, std::vector<std::shared_ptr<isobus::CANHardwarePlugin>> &canDrivers) :
-  DocumentWindow("Configure Hardware", juce::Desktop::getInstance().getDefaultLookAndFeel().findColour(juce::ResizableWindow::backgroundColourId), DocumentWindow::closeButton),
-  parentServer(parentComponent),
-  content(*this, canDrivers)
+  ResponsiveDialogWindow("Configure Hardware", ""),
+	parentServer(parentComponent),
+	content(*this, canDrivers)
 {
-	setOpaque(true);
-	setContentNonOwned(&content, false);
-	setContentComponentSize(400, 390);
-	centreWithSize(400, 390);
-}
-
-void ConfigureHardwareWindow::closeButtonPressed()
-{
-	exitModalState(0);
-	setVisible(false);
+	addCustomComponent(&content, content.preferredSize().y, 0);
+	setVerticalScrollingEnabled(false);
+	addButton("OK", 1, [this] { return content.applyConfiguration(); });
+	addButton("Cancel", 0);
 }

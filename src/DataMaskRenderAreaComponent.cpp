@@ -199,7 +199,7 @@ void DataMaskRenderAreaComponent::mouseUp(const MouseEvent &event)
 						    clickedList->get_option(isobus::InputList::Options::Enabled))
 						{
 							// Need to display a modal combo selection
-							inputListModal.reset(new AlertWindow("Input List Selection", "Select a List Item, then press OK.", MessageBoxIconType::QuestionIcon));
+							inputListModal.reset(new ResponsiveAlertWindow("Input List Selection", "Select a List Item, then press OK.", MessageBoxIconType::QuestionIcon));
 							inputListModal->addComboBox("Input List Combo", StringArray());
 							currentModalComponentCache.clear();
 							currentModalComponentCache.reserve(clickedList->get_number_children());
@@ -312,6 +312,7 @@ void DataMaskRenderAreaComponent::mouseUp(const MouseEvent &event)
 								inputListModal.reset();
 								repaint();
 							};
+							inputListModal->fitToDisplay();
 							inputListModal->enterModalState(true, ModalCallbackFunction::create(std::move(resultCallback)), false);
 							if (nullptr != parentWorkingSet)
 							{
@@ -328,7 +329,7 @@ void DataMaskRenderAreaComponent::mouseUp(const MouseEvent &event)
 
 						if (clickedNumber->get_option2(isobus::InputNumber::Options2::Enabled))
 						{
-							inputNumberModal.reset(new AlertWindow("Input Number", "Enter a value for this input number, then press OK.", MessageBoxIconType::QuestionIcon));
+							inputNumberModal = std::make_unique<ResponsiveDialogWindow>("Input Number", "Enter a value for this input number, then press OK.");
 
 							const auto signedValue = [](std::uint32_t value) {
 								return static_cast<std::int32_t>(value);
@@ -362,11 +363,10 @@ void DataMaskRenderAreaComponent::mouseUp(const MouseEvent &event)
 							// Seeded with what the object holds now, so confirming without typing
 							// anything cannot write a stale value from a previous edit
 							inputNumberListener.set_last_value(currentRawValue);
-							inputNumberModal->addCustomComponent(inputNumberKeypad.get());
+							inputNumberModal->addCustomComponent(inputNumberKeypad.get(), inputNumberKeypad->getHeight());
 							inputNumberModal->addButton("OK", 0);
 							inputNumberModal->addButton("Cancel", 1); // TODO catch ESC as cancel
 							auto resultCallback = [this, clickedNumber, signedValue](int result) {
-								this->inputNumberModal->exitModalState();
 
 								std::uint16_t varNumID = 0xFFFF;
 								if (0 == result)
@@ -443,7 +443,7 @@ void DataMaskRenderAreaComponent::mouseUp(const MouseEvent &event)
 								}
 								ownerServer.process_macro(clickedNumber, isobus::EventID::OnInputFieldDeselection, isobus::VirtualTerminalObjectType::InputNumber, parentWorkingSet);
 							};
-							inputNumberModal->enterModalState(true, ModalCallbackFunction::create(std::move(resultCallback)), false);
+							inputNumberModal->showModal(ownerServer, std::move(resultCallback));
 							ownerServer.send_select_input_object_message(clickedNumber->get_id(), true, true, ownerServer.get_client_control_function_for_working_set(parentWorkingSet));
 							if (parentWorkingSet)
 							{
@@ -515,12 +515,11 @@ void DataMaskRenderAreaComponent::mouseUp(const MouseEvent &event)
 								}
 							}
 
-							inputStringModal.reset(new AlertWindow("Input String", "Enter a value for this input string, then press OK.", MessageBoxIconType::QuestionIcon));
+			inputStringModal = std::make_unique<ResponsiveDialogWindow>("Input String", "Enter a value for this input string, then press OK.");
 							inputStringModal->addTextEditor("Input String", hasStringVariable ? stringVariable->get_value() : clickedString->get_value());
 							inputStringModal->addButton("OK", 0);
 							inputStringModal->addButton("Cancel", 1); // TODO catch ESC as cancel
 							auto resultCallback = [this, clickedString, stringVariable](int result) {
-								this->inputStringModal->exitModalState();
 								ownerServer.send_select_input_object_message(clickedString->get_id(), false, false, ownerServer.get_client_control_function_for_working_set(parentWorkingSet));
 
 								if (0 == result) //OK
@@ -556,7 +555,6 @@ void DataMaskRenderAreaComponent::mouseUp(const MouseEvent &event)
 									}
 									needToRepaintActiveArea = true;
 								}
-								inputStringModal->exitModalState();
 								inputStringModal.reset();
 								if (parentWorkingSet)
 								{
@@ -564,7 +562,7 @@ void DataMaskRenderAreaComponent::mouseUp(const MouseEvent &event)
 								}
 								ownerServer.process_macro(clickedString, isobus::EventID::OnInputFieldDeselection, isobus::VirtualTerminalObjectType::InputString, parentWorkingSet);
 							};
-							inputStringModal->enterModalState(true, ModalCallbackFunction::create(std::move(resultCallback)), false);
+							inputStringModal->showModal(ownerServer, std::move(resultCallback));
 							ownerServer.send_select_input_object_message(clickedString->get_id(), true, true, ownerServer.get_client_control_function_for_working_set(parentWorkingSet));
 							if (parentWorkingSet)
 							{

@@ -743,14 +743,7 @@ void ServerMainComponent::timerCallback()
 	{
 		canAdapterConnected = isAdapterConnected;
 		canInterfaceRunning = isInterfaceRunning;
-		int statusTop = 0;
-#if JUCE_ANDROID
-		const auto *display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay();
-		statusTop = display->userArea.getY() - display->totalArea.getY();
-		if (statusTop == 0)
-			statusTop = 32;
-#endif
-		repaint(getWidth() - CAN_STATUS_INDICATOR_WIDTH, statusTop, CAN_STATUS_INDICATOR_WIDTH, juce::LookAndFeel::getDefaultLookAndFeel().getDefaultMenuBarHeight());
+		repaint(canStatusArea());
 	}
 
 	bool hasIopLoadInProgress = false;
@@ -945,14 +938,7 @@ void ServerMainComponent::paint(juce::Graphics &g)
 	// (Our component is opaque, so we must completely fill the background with a solid colour)
 	g.fillAll(getLookAndFeel().findColour(juce::ResizableWindow::backgroundColourId));
 
-	int statusTop = 0;
-#if JUCE_ANDROID
-	const auto *display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay();
-	statusTop = display->userArea.getY() - display->totalArea.getY();
-	if (statusTop == 0)
-		statusTop = 32;
-#endif
-	auto statusArea = juce::Rectangle<int>(getWidth() - CAN_STATUS_INDICATOR_WIDTH, statusTop, CAN_STATUS_INDICATOR_WIDTH, juce::LookAndFeel::getDefaultLookAndFeel().getDefaultMenuBarHeight());
+	auto statusArea = canStatusArea();
 	{
 		juce::Graphics::ScopedSaveState backgroundState(g);
 		g.setOrigin(statusArea.getPosition());
@@ -960,12 +946,11 @@ void ServerMainComponent::paint(juce::Graphics &g)
 	}
 
 	auto statusColour = juce::Colours::grey;
-	juce::String statusText = "CAN Stopped";
+	juce::String statusText = canStatusText();
 
 	if (canInterfaceRunning)
 	{
 		statusColour = canAdapterConnected ? juce::Colours::limegreen : juce::Colours::red;
-		statusText = canAdapterConnected ? "CAN Connected" : "CAN Disconnected";
 	}
 	g.setColour(statusColour);
 	g.fillEllipse(statusArea.removeFromLeft(statusArea.getHeight()).reduced(7).toFloat());
@@ -1034,13 +1019,34 @@ void ServerMainComponent::resized()
 	                         getWidth(),
 	                         loggerViewport.isVisible() ? LoggerComponent::HEIGHT : 0);
 	menuBar.setBounds(0, topInset, getWidth(), menuBarHeight);
-	menuBar.setBounds(menuBar.getBounds().withTrimmedRight(CAN_STATUS_INDICATOR_WIDTH));
+	menuBar.setBounds(menuBar.getBounds().withTrimmedRight(getWidth() - canStatusArea().getX()));
 	logger.setSize(loggerViewport.getWidth(), logger.getHeight());
 
 	if (logger.getHeight() < loggerViewport.getHeight())
 	{
 		logger.setSize(loggerViewport.getWidth(), loggerViewport.getHeight());
 	}
+}
+
+juce::String ServerMainComponent::canStatusText() const
+{
+	if (!canInterfaceRunning)
+		return "CAN Stopped";
+	return canAdapterConnected ? "CAN Connected" : "CAN Disconnected";
+}
+
+juce::Rectangle<int> ServerMainComponent::canStatusArea() const
+{
+	const auto *display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay();
+	const auto userArea = display->userArea;
+	const int rightInset = display->totalArea.getRight() - userArea.getRight();
+	const int topInset = juce::jmax(0, userArea.getY() - display->totalArea.getY());
+	juce::GlyphArrangement glyphs;
+	glyphs.addLineOfText(juce::Font(juce::FontOptions{}.withHeight(14.0f)), canStatusText(), 0.0f, 0.0f);
+	const int textWidth = juce::roundToInt(glyphs.getBoundingBox(0, glyphs.getNumGlyphs(), true).getWidth());
+	const int height = juce::LookAndFeel::getDefaultLookAndFeel().getDefaultMenuBarHeight();
+	const int width = juce::jmax(CAN_STATUS_INDICATOR_WIDTH, textWidth + height + 16);
+	return { juce::jmax(0, getWidth() - rightInset - width), topInset, width, height };
 }
 
 ApplicationCommandTarget *ServerMainComponent::getNextCommandTarget()
@@ -1165,13 +1171,14 @@ bool ServerMainComponent::perform(const InvocationInfo &info)
 	{
 		case static_cast<int>(CommandIDs::About):
 		{
-			popupMenu = std::make_unique<AlertWindow>("About", "", MessageBoxIconType::InfoIcon);
-			popupMenu->addTextBlock("Version: " + String(ProjectInfo::versionString));
-			popupMenu->addTextBlock("Copyright 2023 Adrian Del Grosso and the Open-Agriculture Developers.");
-			popupMenu->addTextBlock("This software is licensed under the GPL-3.0. You may use or change this software, even commercially, but you may not include it as part of closed-source software. Refer to this project's GitHub page for more details on your license obligations. Please retain the original copyright statements found in this software.");
-			popupMenu->addTextBlock("This is an ISO11783-6 virtual terminal server application based on AgIsoStack++ and the JUCE framework. This software is intended to be used for testing ISO11783 applications that consume AgIsoStack libraries, and serves as a reference implementation of our VT server files in AgIsoStack++.");
-			popupMenu->addButton("OK", 0, KeyPress(KeyPress::returnKey, 0, 0));
-			popupMenu->enterModalState(true, ModalCallbackFunction::create(LanguageCommandConfigClosed{ *this }));
+			aboutDialog = std::make_unique<ResponsiveDialogWindow>("About");
+			aboutDialog->setInfoIconVisible(true);
+			aboutDialog->addTextBlock("Version: " + String(ProjectInfo::versionString));
+			aboutDialog->addTextBlock("Copyright 2023 Adrian Del Grosso and the Open-Agriculture Developers.");
+			aboutDialog->addTextBlock("This software is licensed under the GPL-3.0. You may use or change this software, even commercially, but you may not include it as part of closed-source software. Refer to this project's GitHub page for more details on your license obligations. Please retain the original copyright statements found in this software.");
+			aboutDialog->addTextBlock("This is an ISO11783-6 virtual terminal server application based on AgIsoStack++ and the JUCE framework. This software is intended for testing ISO11783 applications that consume AgIsoStack libraries, and serves as a reference implementation of our VT server files in AgIsoStack++.");
+			aboutDialog->addButton("OK", 0);
+			aboutDialog->showModal(*this, [this](int) { aboutDialog.reset(); });
 			retVal = true;
 		}
 		break;
@@ -1179,99 +1186,123 @@ bool ServerMainComponent::perform(const InvocationInfo &info)
 		case static_cast<int>(CommandIDs::ConfigureLanguageCommand):
 		{
 			retVal = true;
-			popupMenu = std::make_unique<AlertWindow>("Configure Language Command", "Use the following options to configure the units, language, and country that the VT will command from its clients.", MessageBoxIconType::NoIcon);
-			popupMenu->addTextEditor("Language Code", languageCommandInterface.get_language_code(), "Language Code");
-			popupMenu->addTextEditor("Country Code", languageCommandInterface.get_country_code(), "Country Code");
-			popupMenu->addComboBox("Area Units", { "Metric", "Imperial/US" }, "Area Units");
-			popupMenu->addComboBox("Date Format", { "ddmmyyyy", "ddyyyymm", "mmyyyydd", "mmddyyyy", "yyyymmdd", "yyyyddmm" }, "Date Format");
-			popupMenu->addComboBox("Decimal Symbol", { "Comma", "Point" }, "Decimal Symbol");
-			popupMenu->addComboBox("Distance Units", { "Metric", "Imperial/US" }, "Distance Units");
-			popupMenu->addComboBox("Force Units", { "Metric", "Imperial/US" }, "Force Units");
-			popupMenu->addComboBox("Generic Units", { "Metric", "Imperial", "US" }, "Generic Units");
-			popupMenu->addComboBox("Mass Units", { "Metric", "Imperial", "US" }, "Mass Units");
-			popupMenu->addComboBox("Pressure Units", { "Metric", "Imperial/US" }, "Pressure Units");
-			popupMenu->addComboBox("Temperature Units", { "Metric", "Imperial/US" }, "Temperature Units");
-			popupMenu->addComboBox("Time Format", { "24 hour", "12 hour" }, "Time Format");
-			popupMenu->addComboBox("Volume Units", { "Metric", "Imperial", "US" }, "Volume Units ");
-			popupMenu->getComboBoxComponent("Area Units")->setSelectedItemIndex(static_cast<int>(languageCommandInterface.get_commanded_area_units()));
-			popupMenu->getComboBoxComponent("Date Format")->setSelectedItemIndex(static_cast<int>(languageCommandInterface.get_commanded_date_format()));
-			popupMenu->getComboBoxComponent("Decimal Symbol")->setSelectedItemIndex(static_cast<int>(languageCommandInterface.get_commanded_decimal_symbol()));
-			popupMenu->getComboBoxComponent("Distance Units")->setSelectedItemIndex(static_cast<int>(languageCommandInterface.get_commanded_distance_units()));
-			popupMenu->getComboBoxComponent("Force Units")->setSelectedItemIndex(static_cast<int>(languageCommandInterface.get_commanded_force_units()));
-			popupMenu->getComboBoxComponent("Generic Units")->setSelectedItemIndex(static_cast<int>(languageCommandInterface.get_commanded_generic_units()));
-			popupMenu->getComboBoxComponent("Mass Units")->setSelectedItemIndex(static_cast<int>(languageCommandInterface.get_commanded_mass_units()));
-			popupMenu->getComboBoxComponent("Pressure Units")->setSelectedItemIndex(static_cast<int>(languageCommandInterface.get_commanded_pressure_units()));
-			popupMenu->getComboBoxComponent("Temperature Units")->setSelectedItemIndex(static_cast<int>(languageCommandInterface.get_commanded_temperature_units()));
-			popupMenu->getComboBoxComponent("Time Format")->setSelectedItemIndex(static_cast<int>(languageCommandInterface.get_commanded_time_format()));
-			popupMenu->getComboBoxComponent("Volume Units")->setSelectedItemIndex(static_cast<int>(languageCommandInterface.get_commanded_volume_units()));
-			popupMenu->addButton("OK", 1, KeyPress(KeyPress::returnKey, 0, 0));
-			popupMenu->addButton("Cancel", 0, KeyPress(KeyPress::escapeKey, 0, 0));
-			popupMenu->enterModalState(true, ModalCallbackFunction::create(LanguageCommandConfigClosed{ *this }));
+			languageDialog = std::make_unique<ResponsiveDialogWindow>("Configure Language Command", "Use the following options to configure the units, language, and country that the VT will command from its clients.");
+			popupMenu.reset();
+			auto& dialog = *languageDialog;
+			dialog.addTextEditor("Language Code", languageCommandInterface.get_language_code(), "Language Code");
+			dialog.addTextEditor("Country Code", languageCommandInterface.get_country_code(), "Country Code");
+			dialog.addComboBox("Area Units", { "Metric", "Imperial/US" }, "Area Units");
+			dialog.addComboBox("Date Format", { "ddmmyyyy", "ddyyyymm", "mmyyyydd", "mmddyyyy", "yyyymmdd", "yyyyddmm" }, "Date Format");
+			dialog.addComboBox("Decimal Symbol", { "Comma", "Point" }, "Decimal Symbol");
+			dialog.addComboBox("Distance Units", { "Metric", "Imperial/US" }, "Distance Units");
+			dialog.addComboBox("Force Units", { "Metric", "Imperial/US" }, "Force Units");
+			dialog.addComboBox("Generic Units", { "Metric", "Imperial", "US" }, "Generic Units");
+			dialog.addComboBox("Mass Units", { "Metric", "Imperial", "US" }, "Mass Units");
+			dialog.addComboBox("Pressure Units", { "Metric", "Imperial/US" }, "Pressure Units");
+			dialog.addComboBox("Temperature Units", { "Metric", "Imperial/US" }, "Temperature Units");
+			dialog.addComboBox("Time Format", { "24 hour", "12 hour" }, "Time Format");
+			dialog.addComboBox("Volume Units", { "Metric", "Imperial", "US" }, "Volume Units");
+			dialog.getComboBoxComponent("Area Units")->setSelectedItemIndex(static_cast<int>(languageCommandInterface.get_commanded_area_units()));
+			dialog.getComboBoxComponent("Date Format")->setSelectedItemIndex(static_cast<int>(languageCommandInterface.get_commanded_date_format()));
+			dialog.getComboBoxComponent("Decimal Symbol")->setSelectedItemIndex(static_cast<int>(languageCommandInterface.get_commanded_decimal_symbol()));
+			dialog.getComboBoxComponent("Distance Units")->setSelectedItemIndex(static_cast<int>(languageCommandInterface.get_commanded_distance_units()));
+			dialog.getComboBoxComponent("Force Units")->setSelectedItemIndex(static_cast<int>(languageCommandInterface.get_commanded_force_units()));
+			dialog.getComboBoxComponent("Generic Units")->setSelectedItemIndex(static_cast<int>(languageCommandInterface.get_commanded_generic_units()));
+			dialog.getComboBoxComponent("Mass Units")->setSelectedItemIndex(static_cast<int>(languageCommandInterface.get_commanded_mass_units()));
+			dialog.getComboBoxComponent("Pressure Units")->setSelectedItemIndex(static_cast<int>(languageCommandInterface.get_commanded_pressure_units()));
+			dialog.getComboBoxComponent("Temperature Units")->setSelectedItemIndex(static_cast<int>(languageCommandInterface.get_commanded_temperature_units()));
+			dialog.getComboBoxComponent("Time Format")->setSelectedItemIndex(static_cast<int>(languageCommandInterface.get_commanded_time_format()));
+			dialog.getComboBoxComponent("Volume Units")->setSelectedItemIndex(static_cast<int>(languageCommandInterface.get_commanded_volume_units()));
+			dialog.addButton("OK", 1);
+			dialog.addButton("Cancel", 0);
+			dialog.showModal(*this, [this](int result) {
+				LanguageCommandConfigClosed{ *this }(result);
+				languageDialog.reset();
+			});
 		}
 		break;
 
 		case static_cast<int>(CommandIDs::ConfigureReportedVersion):
 		{
-			popupMenu = std::make_unique<AlertWindow>("Configure Reported VT Server Version", "You can use this setting to change the version of the ISO11783-6 standard that this server will claim to support in its status messages.", MessageBoxIconType::NoIcon);
-			popupMenu->addComboBox("Version", { "Version 2 or Older", "Version 3", "Version 4", "Version 5", "Version 6" });
-			popupMenu->addButton("OK", 2, KeyPress(KeyPress::returnKey, 0, 0));
-			popupMenu->addButton("Cancel", 0, KeyPress(KeyPress::escapeKey, 0, 0));
-			popupMenu->getComboBoxComponent("Version")->setSelectedItemIndex(static_cast<int>(versionToReport));
-			popupMenu->enterModalState(true, ModalCallbackFunction::create(LanguageCommandConfigClosed{ *this }));
+			versionDialog = std::make_unique<ResponsiveDialogWindow>("Configure Reported VT Server Version", "You can use this setting to change the version of the ISO11783-6 standard that this server will claim to support in its status messages.");
+			versionDialog->addComboBox("Version", { "Version 2 or Older", "Version 3", "Version 4", "Version 5", "Version 6" });
+			versionDialog->addButton("OK", 2);
+			versionDialog->addButton("Cancel", 0);
+			versionDialog->getComboBoxComponent("Version")->setSelectedItemIndex(static_cast<int>(versionToReport));
+			versionDialog->showModal(*this, [this](int result) {
+				LanguageCommandConfigClosed{ *this }(result);
+				versionDialog.reset();
+			});
 			retVal = true;
 		}
 		break;
 
 		case static_cast<int>(CommandIDs::ConfigureReportedHardware):
 		{
-			popupMenu = std::make_unique<AlertWindow>("Configure Reported VT Capabilities", "You can use this menu to configure what the server will report to clients in the \"get hardware\" message response, as well as what will be displayed in the data/soft key mask render components of this application. Some of these settings may require you to close and reopen the application to avoid weird discrepancies with connected clients.", MessageBoxIconType::NoIcon);
-			popupMenu->addTextEditor("VT number", String(vtNumber), "VT number (1-32, only applied on restart)");
-			popupMenu->addTextEditor("Data Mask Size (height and width)", String(dataMaskRenderer.getWidth()), "Data Mask Size (height and width)");
-			popupMenu->addComboBox("Screen Scale", { "Automatic (fit to window)", "100 %", "125 %", "150 %", "200 %", "250 %", "300 %", "400 %" });
-			popupMenu->addTextEditor("Soft Key Designator Height", String(get_soft_key_descriptor_y_pixel_height()), "Soft Key Designator Height (min 60)");
-			popupMenu->addTextEditor("Soft Key Designator Width", String(get_soft_key_descriptor_x_pixel_width()), "Soft Key Designator Width (min 60)");
-			popupMenu->addTextEditor("Number of Physical Soft Key columns", String(get_physical_soft_key_columns()), "Number of Physical Soft Key columns (min 1)");
-			popupMenu->addTextEditor("Number of Physical Soft Key rows", String(get_physical_soft_key_rows()), "Number of Physical Soft Key rows (min 1)");
+			capabilitiesDialog = std::make_unique<ResponsiveDialogWindow>("Configure Reported VT Capabilities", "Configure the VT capabilities and display dimensions.");
+			auto& dialog = *capabilitiesDialog;
+			dialog.addTextEditor("VT number", String(vtNumber), "VT number (1-32, only applied on restart)");
+			dialog.addTextEditor("Data Mask Size (height and width)", String(dataMaskRenderer.getWidth()), "Data Mask Size (height and width)");
+			dialog.addComboBox("Screen Scale", { "Automatic (fit to window)", "100 %", "125 %", "150 %", "200 %", "250 %", "300 %", "400 %" });
+			dialog.addTextEditor("Soft Key Designator Height", String(get_soft_key_descriptor_y_pixel_height()), "Soft Key Designator Height (min 60)");
+			dialog.addTextEditor("Soft Key Designator Width", String(get_soft_key_descriptor_x_pixel_width()), "Soft Key Designator Width (min 60)");
+			dialog.addTextEditor("Number of Physical Soft Key columns", String(get_physical_soft_key_columns()), "Number of Physical Soft Key columns (min 1)");
+			dialog.addTextEditor("Number of Physical Soft Key rows", String(get_physical_soft_key_rows()), "Number of Physical Soft Key rows (min 1)");
 
-			popupMenu->getTextEditor("VT number")->setInputRestrictions(2, "1234567890");
-			popupMenu->getTextEditor("Data Mask Size (height and width)")->setInputRestrictions(4, "1234567890");
+			dialog.getTextEditor("VT number")->setInputRestrictions(2, "1234567890");
+			dialog.getTextEditor("Data Mask Size (height and width)")->setInputRestrictions(4, "1234567890");
 			// The scale magnifies the display only, so the item order has to match SCREEN_SCALE_CHOICES
-			popupMenu->getComboBoxComponent("Screen Scale")->setSelectedItemIndex(get_screen_scale_choice_index());
-			popupMenu->getTextEditor("Soft Key Designator Height")->setInputRestrictions(4, "1234567890");
-			popupMenu->getTextEditor("Soft Key Designator Width")->setInputRestrictions(4, "1234567890");
-			popupMenu->getTextEditor("Number of Physical Soft Key columns")->setInputRestrictions(1, "1234567890");
-			popupMenu->getTextEditor("Number of Physical Soft Key rows")->setInputRestrictions(2, "1234567890");
+			dialog.getComboBoxComponent("Screen Scale")->setSelectedItemIndex(get_screen_scale_choice_index());
+			dialog.getTextEditor("Soft Key Designator Height")->setInputRestrictions(4, "1234567890");
+			dialog.getTextEditor("Soft Key Designator Width")->setInputRestrictions(4, "1234567890");
+			dialog.getTextEditor("Number of Physical Soft Key columns")->setInputRestrictions(1, "1234567890");
+			dialog.getTextEditor("Number of Physical Soft Key rows")->setInputRestrictions(2, "1234567890");
 
-			popupMenu->addButton("OK", 3, KeyPress(KeyPress::returnKey, 0, 0));
-			popupMenu->addButton("Cancel", 0, KeyPress(KeyPress::escapeKey, 0, 0));
-			popupMenu->enterModalState(true, ModalCallbackFunction::create(LanguageCommandConfigClosed{ *this }));
+			dialog.addButton("OK", 3);
+			dialog.addButton("Cancel", 0);
+			dialog.showModal(*this, [this](int result) {
+				LanguageCommandConfigClosed{ *this }(result);
+				capabilitiesDialog.reset();
+			});
 			retVal = true;
 		}
 		break;
 
 		case static_cast<int>(CommandIDs::ConfigureLogging):
 		{
-			popupMenu = std::make_unique<AlertWindow>("Configure Logging", "", MessageBoxIconType::NoIcon);
-			popupMenu->addTextBlock("Select a logging level. The logging level affects what's shown in the logging area, and what is written to the log file. Setting logging to \"debug\" may impact performance.");
-			popupMenu->addComboBox("Logging Level", { "Debug", "Info", "Warning", "Error", "Critical" });
-			popupMenu->getComboBoxComponent("Logging Level")->setSelectedItemIndex(static_cast<int>(isobus::CANStackLogger::get_log_level()));
-			popupMenu->addTextBlock("Select if the log window should be shown or hidden. Showing the log window may affect performance.");
-			popupMenu->addComboBox("Logging Window", { "Hidden", "Enabled" });
-			popupMenu->getComboBoxComponent("Logging Window")->setSelectedItemIndex(loggerViewport.isVisible() ? 1 : 0);
-			popupMenu->addTextBlock("Save IOP data before parsing. This allows providing IOP data for debugging parser crashes.");
-			popupMenu->addComboBox("Save IOP data before parsing", { "No", "Yes" });
-			popupMenu->getComboBoxComponent("Save IOP data before parsing")->setSelectedItemIndex(saveIopBeforeParse ? 1 : 0);
-			popupMenu->addButton("OK", 4, KeyPress(KeyPress::returnKey, 0, 0));
-			popupMenu->addButton("Cancel", 0, KeyPress(KeyPress::escapeKey, 0, 0));
-			popupMenu->enterModalState(true, ModalCallbackFunction::create(LanguageCommandConfigClosed{ *this }));
+			loggingDialog = std::make_unique<ResponsiveDialogWindow>("Configure Logging");
+			loggingDialog->addTextBlock("Select a logging level. The logging level affects what's shown in the logging area, and what is written to the log file. Setting logging to debug may impact performance.");
+			loggingDialog->addComboBox("Logging Level", { "Debug", "Info", "Warning", "Error", "Critical" });
+			loggingDialog->getComboBoxComponent("Logging Level")->setSelectedItemIndex(static_cast<int>(isobus::CANStackLogger::get_log_level()));
+			loggingDialog->addTextBlock("Select if the log window should be shown or hidden. Showing the log window may affect performance.");
+			loggingDialog->addComboBox("Logging Window", { "Hidden", "Enabled" });
+			loggingDialog->getComboBoxComponent("Logging Window")->setSelectedItemIndex(loggerViewport.isVisible() ? 1 : 0);
+			loggingDialog->addTextBlock("Save IOP data before parsing. This allows providing IOP data for debugging parser crashes.");
+			loggingDialog->addComboBox("Save IOP data before parsing", { "No", "Yes" });
+			loggingDialog->getComboBoxComponent("Save IOP data before parsing")->setSelectedItemIndex(saveIopBeforeParse ? 1 : 0);
+			loggingDialog->addButton("OK", 4);
+			loggingDialog->addButton("Cancel", 0);
+			loggingDialog->showModal(*this, [this](int result) {
+				LanguageCommandConfigClosed{ *this }(result);
+				loggingDialog.reset();
+			});
 			retVal = true;
 		}
 		break;
 
 		case static_cast<int>(CommandIDs::ConfigureShortcuts):
 		{
-			popupMenu = std::make_unique<AckSettingsWindow>(alarmAckKeyCode, showAckButton);
-			popupMenu->enterModalState(true, ModalCallbackFunction::create(LanguageCommandConfigClosed{ *this }));
+			ackSettingsDialog = std::make_unique<AckSettingsWindow>(alarmAckKeyCode, showAckButton);
+			ackSettingsDialog->showModal(*this, [this](int result) {
+				if (result == 5)
+				{
+					alarmAckKeyCode = ackSettingsDialog->alarmAckKeyCode();
+					showAckButton = ackSettingsDialog->shouldShowAckButton();
+					update_ack_button_visibility();
+					save_settings();
+				}
+				ackSettingsDialog.reset();
+			});
 			retVal = true;
 		}
 		break;
@@ -1389,13 +1420,7 @@ bool ServerMainComponent::perform(const InvocationInfo &info)
 		case static_cast<int>(CommandIDs::ConfigureCANHardware):
 		{
 			configureHardwareWindow = std::make_unique<ConfigureHardwareWindow>(*this, parentCANDrivers);
-			Rectangle<int> area(0, 0, 400, 390);
-			RectanglePlacement placement(RectanglePlacement::centred |
-			                             RectanglePlacement::doNotResize);
-			auto result = placement.appliedTo(area, Desktop::getInstance().getDisplays().getPrimaryDisplay()->userArea.reduced(20));
-			configureHardwareWindow->setBounds(result);
-
-			configureHardwareWindow->enterModalState(true);
+			configureHardwareWindow->showModal(*this, [this](int) { configureHardwareWindow.reset(); });
 			retVal = true;
 		}
 		break;
@@ -1670,19 +1695,19 @@ void ServerMainComponent::LanguageCommandConfigClosed::operator()(int result) co
 	{
 		case 1: // Save Language Command
 		{
-			auto languageCode = mParent.popupMenu->getTextEditorContents("Language Code");
-			auto countryCode = mParent.popupMenu->getTextEditorContents("Country Code");
-			auto areaUnits = static_cast<isobus::LanguageCommandInterface::AreaUnits>(mParent.popupMenu->getComboBoxComponent("Area Units")->getSelectedItemIndex());
-			auto dateFormat = static_cast<isobus::LanguageCommandInterface::DateFormats>(mParent.popupMenu->getComboBoxComponent("Date Format")->getSelectedItemIndex());
-			auto decimalSymbol = static_cast<isobus::LanguageCommandInterface::DecimalSymbols>(mParent.popupMenu->getComboBoxComponent("Decimal Symbol")->getSelectedItemIndex());
-			auto distanceUnits = static_cast<isobus::LanguageCommandInterface::DistanceUnits>(mParent.popupMenu->getComboBoxComponent("Distance Units")->getSelectedItemIndex());
-			auto forceUnits = static_cast<isobus::LanguageCommandInterface::ForceUnits>(mParent.popupMenu->getComboBoxComponent("Force Units")->getSelectedItemIndex());
-			auto genericUnits = static_cast<isobus::LanguageCommandInterface::UnitSystem>(mParent.popupMenu->getComboBoxComponent("Generic Units")->getSelectedItemIndex());
-			auto massUnits = static_cast<isobus::LanguageCommandInterface::MassUnits>(mParent.popupMenu->getComboBoxComponent("Mass Units")->getSelectedItemIndex());
-			auto pressureUnits = static_cast<isobus::LanguageCommandInterface::PressureUnits>(mParent.popupMenu->getComboBoxComponent("Pressure Units")->getSelectedItemIndex());
-			auto temperatureUnits = static_cast<isobus::LanguageCommandInterface::TemperatureUnits>(mParent.popupMenu->getComboBoxComponent("Temperature Units")->getSelectedItemIndex());
-			auto timeFormat = static_cast<isobus::LanguageCommandInterface::TimeFormats>(mParent.popupMenu->getComboBoxComponent("Time Format")->getSelectedItemIndex());
-			auto volumeUnits = static_cast<isobus::LanguageCommandInterface::VolumeUnits>(mParent.popupMenu->getComboBoxComponent("Volume Units")->getSelectedItemIndex());
+			auto languageCode = mParent.languageDialog->getTextEditorContents("Language Code");
+			auto countryCode = mParent.languageDialog->getTextEditorContents("Country Code");
+			auto areaUnits = static_cast<isobus::LanguageCommandInterface::AreaUnits>(mParent.languageDialog->getComboBoxComponent("Area Units")->getSelectedItemIndex());
+			auto dateFormat = static_cast<isobus::LanguageCommandInterface::DateFormats>(mParent.languageDialog->getComboBoxComponent("Date Format")->getSelectedItemIndex());
+			auto decimalSymbol = static_cast<isobus::LanguageCommandInterface::DecimalSymbols>(mParent.languageDialog->getComboBoxComponent("Decimal Symbol")->getSelectedItemIndex());
+			auto distanceUnits = static_cast<isobus::LanguageCommandInterface::DistanceUnits>(mParent.languageDialog->getComboBoxComponent("Distance Units")->getSelectedItemIndex());
+			auto forceUnits = static_cast<isobus::LanguageCommandInterface::ForceUnits>(mParent.languageDialog->getComboBoxComponent("Force Units")->getSelectedItemIndex());
+			auto genericUnits = static_cast<isobus::LanguageCommandInterface::UnitSystem>(mParent.languageDialog->getComboBoxComponent("Generic Units")->getSelectedItemIndex());
+			auto massUnits = static_cast<isobus::LanguageCommandInterface::MassUnits>(mParent.languageDialog->getComboBoxComponent("Mass Units")->getSelectedItemIndex());
+			auto pressureUnits = static_cast<isobus::LanguageCommandInterface::PressureUnits>(mParent.languageDialog->getComboBoxComponent("Pressure Units")->getSelectedItemIndex());
+			auto temperatureUnits = static_cast<isobus::LanguageCommandInterface::TemperatureUnits>(mParent.languageDialog->getComboBoxComponent("Temperature Units")->getSelectedItemIndex());
+			auto timeFormat = static_cast<isobus::LanguageCommandInterface::TimeFormats>(mParent.languageDialog->getComboBoxComponent("Time Format")->getSelectedItemIndex());
+			auto volumeUnits = static_cast<isobus::LanguageCommandInterface::VolumeUnits>(mParent.languageDialog->getComboBoxComponent("Volume Units")->getSelectedItemIndex());
 
 			mParent.languageCommandInterface.set_language_code(languageCode.toStdString());
 			mParent.languageCommandInterface.set_country_code(countryCode.toStdString());
@@ -1705,7 +1730,7 @@ void ServerMainComponent::LanguageCommandConfigClosed::operator()(int result) co
 
 		case 2: // Save Version
 		{
-			auto version = mParent.popupMenu->getComboBoxComponent("Version")->getSelectedItemIndex() + 2;
+			auto version = mParent.versionDialog->getComboBoxComponent("Version")->getSelectedItemIndex() + 2;
 			mParent.versionToReport = get_version_from_setting(version);
 
 			mParent.save_settings();
@@ -1714,24 +1739,24 @@ void ServerMainComponent::LanguageCommandConfigClosed::operator()(int result) co
 
 		case 3: // Save Reported Hardware
 		{
-			auto dataMaskSize = mParent.popupMenu->getTextEditorContents("Data Mask Size (height and width)");
+			auto dataMaskSize = mParent.capabilitiesDialog->getTextEditorContents("Data Mask Size (height and width)");
 			mParent.dataMaskRenderer.setSize(dataMaskSize.getIntValue(), dataMaskSize.getIntValue());
 			mParent.softKeyMaskRenderer.setTopLeftPosition(100 + dataMaskSize.getIntValue(), 4 + juce::LookAndFeel::getDefaultLookAndFeel().getDefaultMenuBarHeight());
 
-			mParent.softKeyMaskDimensions.columnCount = mParent.popupMenu->getTextEditorContents("Number of Physical Soft Key columns").getIntValue();
-			mParent.softKeyMaskDimensions.rowCount = mParent.popupMenu->getTextEditorContents("Number of Physical Soft Key rows").getIntValue();
+			mParent.softKeyMaskDimensions.columnCount = mParent.capabilitiesDialog->getTextEditorContents("Number of Physical Soft Key columns").getIntValue();
+			mParent.softKeyMaskDimensions.rowCount = mParent.capabilitiesDialog->getTextEditorContents("Number of Physical Soft Key rows").getIntValue();
 			if (mParent.get_number_of_physical_soft_keys() != mParent.softKeyMaskDimensions.key_count())
 			{
 				mParent.softKeyMaskDimensions.rowCount = (mParent.get_number_of_physical_soft_keys() / mParent.softKeyMaskDimensions.columnCount);
 			}
 
-			mParent.softKeyMaskDimensions.keyWidth = mParent.popupMenu->getTextEditorContents("Soft Key Designator Width").getIntValue();
-			mParent.softKeyMaskDimensions.keyHeight = mParent.popupMenu->getTextEditorContents("Soft Key Designator Height").getIntValue();
+			mParent.softKeyMaskDimensions.keyWidth = mParent.capabilitiesDialog->getTextEditorContents("Soft Key Designator Width").getIntValue();
+			mParent.softKeyMaskDimensions.keyHeight = mParent.capabilitiesDialog->getTextEditorContents("Soft Key Designator Height").getIntValue();
 			JuceManagedWorkingSetCache::set_softkey_mask_dimension_info(mParent.softKeyMaskDimensions);
 
 			mParent.softKeyMaskRenderer.setSize(mParent.softKeyMaskDimensions.total_width(), dataMaskSize.getIntValue());
 
-			mParent.vtNumber = mParent.popupMenu->getTextEditorContents("VT number").getIntValue();
+			mParent.vtNumber = mParent.capabilitiesDialog->getTextEditorContents("VT number").getIntValue();
 			if (mParent.vtNumber > 32)
 			{
 				mParent.vtNumber = 32;
@@ -1741,7 +1766,7 @@ void ServerMainComponent::LanguageCommandConfigClosed::operator()(int result) co
 				mParent.vtNumber = 1;
 			}
 
-			const int scaleChoice = mParent.popupMenu->getComboBoxComponent("Screen Scale")->getSelectedItemIndex();
+			const int scaleChoice = mParent.capabilitiesDialog->getComboBoxComponent("Screen Scale")->getSelectedItemIndex();
 
 			mParent.automaticDisplayScale = (0 >= scaleChoice);
 
@@ -1758,8 +1783,8 @@ void ServerMainComponent::LanguageCommandConfigClosed::operator()(int result) co
 
 		case 4: // Log level
 		{
-			isobus::CANStackLogger::set_log_level(static_cast<isobus::CANStackLogger::LoggingLevel>(mParent.popupMenu->getComboBoxComponent("Logging Level")->getSelectedItemIndex()));
-			if (mParent.popupMenu->getComboBoxComponent("Logging Window")->getSelectedItemIndex() == 1)
+			isobus::CANStackLogger::set_log_level(static_cast<isobus::CANStackLogger::LoggingLevel>(mParent.loggingDialog->getComboBoxComponent("Logging Level")->getSelectedItemIndex()));
+			if (mParent.loggingDialog->getComboBoxComponent("Logging Window")->getSelectedItemIndex() == 1)
 			{
 				mParent.logger.setVisible(true);
 				mParent.loggerViewport.setVisible(true);
@@ -1771,20 +1796,13 @@ void ServerMainComponent::LanguageCommandConfigClosed::operator()(int result) co
 			}
 
 			mParent.apply_display_size();
-			mParent.saveIopBeforeParse = (mParent.popupMenu->getComboBoxComponent("Save IOP data before parsing")->getSelectedItemIndex() == 1);
+			mParent.saveIopBeforeParse = (mParent.loggingDialog->getComboBoxComponent("Save IOP data before parsing")->getSelectedItemIndex() == 1);
 			mParent.save_settings();
 		}
 		break;
 
-		case 5: // ACK button
-		{
-			auto *ackSettingsWindow = dynamic_cast<AckSettingsWindow *>(mParent.popupMenu.get());
-			mParent.alarmAckKeyCode = ackSettingsWindow->alarmAckKeyCode();
-			mParent.showAckButton = ackSettingsWindow->shouldShowAckButton();
-			mParent.update_ack_button_visibility();
-			mParent.save_settings();
-		}
-		break;
+		case 5: // ACK button is handled by AckSettingsWindow's callback
+			break;
 
 		default:
 		{
@@ -1792,8 +1810,13 @@ void ServerMainComponent::LanguageCommandConfigClosed::operator()(int result) co
 		}
 		break;
 	}
-	mParent.exitModalState(result);
-	mParent.popupMenu.reset();
+	// The legacy About dialog still uses the parent's modal callback. The new
+	// dialogs own their modal state and are released by their own callbacks.
+	if (mParent.popupMenu != nullptr)
+	{
+		mParent.exitModalState(result);
+		mParent.popupMenu.reset();
+	}
 }
 
 ServerMainComponent::HeldButtonData::HeldButtonData(std::shared_ptr<isobus::VirtualTerminalServerManagedWorkingSet> workingSet, std::uint16_t objectID, std::uint16_t maskObjectID, std::uint8_t keyCode, bool isSoftKey) :

@@ -6,30 +6,20 @@
 #include "AckSettingsWindow.hpp"
 
 AckSettingsWindow::AckSettingsWindow(int alarmAckKeyCode, bool showAckButton, Component *associatedComponent) :
-  juce::AlertWindow("ACK button", "", MessageBoxIconType::NoIcon, associatedComponent),
+  ResponsiveDialogWindow("ACK button", "Configure the alarm acknowledge key and dedicated ACK button."),
   alarmAckKey(alarmAckKeyCode)
 {
 	juce::KeyPress alarmAckKey(alarmAckKeyCode);
-	addCustomComponent(&selectAlarmAckKeyButton);
+	addButton("OK", 5);
+	addButton("Cancel", 0);
 	selectAlarmAckKeyButton.onClick = [this]() { setAlarmAckKeySelection(true); };
 	updateAlarmAckButtonLabel(alarmAckKey);
-
+	addCustomComponent(&selectAlarmAckKeyButton);
 	showAckButtonCheckbox.setButtonText("Show dedicated ACK button when an alarm mask is active");
 	showAckButtonCheckbox.setToggleState(showAckButton, juce::dontSendNotification);
 	addCustomComponent(&showAckButtonCheckbox);
 
-	addButton("OK", 5, KeyPress(KeyPress::returnKey, 0, 0));
-	addButton("Cancel", 0);
-
 	setAlarmAckKeySelection(false);
-}
-
-void AckSettingsWindow::resized()
-{
-	auto area = getLocalBounds();
-	auto customArea = area.removeFromTop(40).removeFromLeft(area.getWidth() / 1.2);
-	selectAlarmAckKeyButton.setBounds(customArea);
-	showAckButtonCheckbox.setBounds(customArea.translated(0, 40));
 }
 
 bool AckSettingsWindow::keyPressed(const KeyPress &key, Component *originatingComponent)

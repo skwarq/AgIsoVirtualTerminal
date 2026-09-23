@@ -63,7 +63,9 @@ juce_generate_juce_header(AgISOVirtualTerminal)
 
 target_sources(
   AgISOVirtualTerminal
-  PRIVATE src/Main.cpp
+  PRIVATE src/ResponsiveAlertWindow.cpp
+          src/ResponsiveDialogWindow.cpp
+          src/Main.cpp
           "src/ServerMainComponent.cpp"
           "src/DataMaskComponent.cpp"
           "src/WorkingSetSelectorComponent.cpp"
