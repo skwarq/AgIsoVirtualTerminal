@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ConfigureHardwareWindow.hpp"
+#include "TcpGatewayDiscovery.hpp"
 #include "DataMaskRenderAreaComponent.hpp"
 #include "LoggerComponent.hpp"
 #include "ResponsiveAlertWindow.hpp"
@@ -16,6 +17,7 @@ class AckSettingsWindow;
 #include "isobus/isobus/isobus_virtual_terminal_server.hpp"
 
 #include <filesystem>
+#include <chrono>
 #include <map>
 #include <mutex>
 #include <set>
@@ -109,6 +111,8 @@ public:
 	std::uint8_t get_user_layout_softkeymask_bg_color() const override;
 
 	void timerCallback() override;
+	bool is_tcp_discovery_enabled() const { return tcpDiscoveryEnabled; }
+	void set_tcp_discovery_enabled(bool enabled) { tcpDiscoveryEnabled = enabled; tcpDisconnectTimerActive = false; }
 
 	void paint(juce::Graphics &g) override;
 	void resized() override;
@@ -250,7 +254,8 @@ private:
 	bool is_active_alarm_mask() const;
 	void update_ack_button_visibility();
 	void check_load_settings(std::shared_ptr<ValueTree> settings);
-	bool start_can_interface();
+	bool start_can_interface(bool discoveryEndpointReady = false);
+	void stop_can_interface();
 	void remove_working_set(std::shared_ptr<isobus::VirtualTerminalServerManagedWorkingSet> workingSetToRemove);
 	void clear_iso_data();
 
@@ -283,6 +288,11 @@ private:
 	std::unique_ptr<ConfigureHardwareWindow> configureHardwareWindow;
 	std::shared_ptr<isobus::ControlFunction> alarmAckKeyWs;
 	std::vector<std::shared_ptr<isobus::CANHardwarePlugin>> &parentCANDrivers;
+	std::unique_ptr<TcpGatewayDiscovery> tcpGatewayDiscovery;
+	bool tcpDiscoveryEnabled = true;
+	bool tcpDiscoveryPending = false;
+	bool tcpDisconnectTimerActive = false;
+	std::chrono::steady_clock::time_point tcpDisconnectedSince{};
 	std::vector<HeldButtonData> heldButtons;
 	std::set<std::string> loadedNames;
 	std::set<const isobus::VirtualTerminalServerManagedWorkingSet *> loadVersionResponsesSent;

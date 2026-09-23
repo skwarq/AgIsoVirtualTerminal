@@ -26,6 +26,20 @@ ConfigureHardwareComponent::ConfigureHardwareComponent(ConfigureHardwareWindow &
 	socketCANNameEditor.setFont(Font(FontOptions{}.withHeight(16.0f)));
 	tcpHostEditor.setFont(Font(FontOptions{}.withHeight(16.0f)));
 	tcpPortEditor.setFont(Font(FontOptions{}.withHeight(16.0f)));
+	tcpConnectionModeSelector.addItemList({ "Discovery", "Manual IP and TCP port" }, 1);
+	tcpConnectionModeSelector.setJustificationType(Justification::centred);
+	tcpConnectionModeSelector.onChange = [this]() {
+#if JUCE_ANDROID
+		const bool tcpSelected = true;
+#else
+		const bool tcpSelected = hardwareInterfaceSelector.getSelectedId() == static_cast<int>(parentCANDrivers.size());
+#endif
+		const bool manual = tcpSelected && tcpConnectionModeSelector.getSelectedId() == 2;
+		tcpHostEditor.setVisible(manual);
+		tcpPortEditor.setVisible(manual);
+		parentWindow.updateCustomComponentHeight(this, preferredSize().y);
+		repaint();
+	};
 	touCANSerialEditor.setFont(Font(FontOptions{}.withHeight(16.0f)));
 
 #ifdef JUCE_WINDOWS
@@ -61,15 +75,19 @@ ConfigureHardwareComponent::ConfigureHardwareComponent(ConfigureHardwareWindow &
 		const bool tcpSelected = hardwareInterfaceSelector.getSelectedId() == static_cast<int>(parentCANDrivers.size());
 		tcpHostEditor.setVisible(tcpSelected);
 		tcpPortEditor.setVisible(tcpSelected);
+		tcpConnectionModeSelector.setVisible(tcpSelected);
+		tcpConnectionModeSelector.onChange();
 		repaint();
 	};
 	addAndMakeVisible(hardwareInterfaceSelector);
 
+	addAndMakeVisible(tcpConnectionModeSelector);
 	auto tcpDriver = std::static_pointer_cast<TcpCANPlugin>(parentCANDrivers.back());
-	tcpHostEditor.setText(tcpDriver->get_host(), dontSendNotification);
+	tcpConnectionModeSelector.setSelectedId(parentWindow.parentServer.is_tcp_discovery_enabled() ? 1 : 2, dontSendNotification);
+	tcpHostEditor.setText(tcpDriver->get_configured_host(), dontSendNotification);
 	tcpHostEditor.setVisible(false);
 	addChildComponent(tcpHostEditor);
-	tcpPortEditor.setText(std::to_string(tcpDriver->get_port()), dontSendNotification);
+	tcpPortEditor.setText(std::to_string(tcpDriver->get_configured_port()), dontSendNotification);
 	tcpPortEditor.setInputFilter(new TextEditor::LengthAndCharacterRestriction(5, "1234567890"), true);
 	tcpPortEditor.setVisible(false);
 	addChildComponent(tcpPortEditor);
@@ -88,15 +106,19 @@ ConfigureHardwareComponent::ConfigureHardwareComponent(ConfigureHardwareWindow &
 		const bool tcpSelected = hardwareInterfaceSelector.getSelectedId() == static_cast<int>(parentCANDrivers.size());
 		tcpHostEditor.setVisible(tcpSelected);
 		tcpPortEditor.setVisible(tcpSelected);
+		tcpConnectionModeSelector.setVisible(tcpSelected);
+		tcpConnectionModeSelector.onChange();
 		socketCANNameEditor.setVisible(!tcpSelected);
 		repaint();
 	};
 	addAndMakeVisible(hardwareInterfaceSelector);
+	addAndMakeVisible(tcpConnectionModeSelector);
 	const auto tcpDriver = std::static_pointer_cast<TcpCANPlugin>(parentCANDrivers.back());
-	tcpHostEditor.setText(tcpDriver->get_host(), dontSendNotification);
+	tcpConnectionModeSelector.setSelectedId(parentWindow.parentServer.is_tcp_discovery_enabled() ? 1 : 2, dontSendNotification);
+	tcpHostEditor.setText(tcpDriver->get_configured_host(), dontSendNotification);
 	tcpHostEditor.setVisible(false);
 	addChildComponent(tcpHostEditor);
-	tcpPortEditor.setText(std::to_string(tcpDriver->get_port()), dontSendNotification);
+	tcpPortEditor.setText(std::to_string(tcpDriver->get_configured_port()), dontSendNotification);
 	tcpPortEditor.setInputFilter(new TextEditor::LengthAndCharacterRestriction(5, "1234567890"), true);
 	tcpPortEditor.setVisible(false);
 	addChildComponent(tcpPortEditor);
@@ -111,14 +133,18 @@ ConfigureHardwareComponent::ConfigureHardwareComponent(ConfigureHardwareWindow &
 	hardwareInterfaceSelector.onChange = [this]() {
 		tcpHostEditor.setVisible(true);
 		tcpPortEditor.setVisible(true);
+		tcpConnectionModeSelector.setVisible(true);
+		tcpConnectionModeSelector.onChange();
 		repaint();
 	};
 	addAndMakeVisible(hardwareInterfaceSelector);
+	addAndMakeVisible(tcpConnectionModeSelector);
 	const auto tcpDriver = std::static_pointer_cast<TcpCANPlugin>(parentCANDrivers.front());
-	tcpHostEditor.setText(tcpDriver->get_host(), dontSendNotification);
+	tcpConnectionModeSelector.setSelectedId(parentWindow.parentServer.is_tcp_discovery_enabled() ? 1 : 2, dontSendNotification);
+	tcpHostEditor.setText(tcpDriver->get_configured_host(), dontSendNotification);
 	tcpHostEditor.setVisible(true);
 	addAndMakeVisible(tcpHostEditor);
-	tcpPortEditor.setText(std::to_string(tcpDriver->get_port()), dontSendNotification);
+	tcpPortEditor.setText(std::to_string(tcpDriver->get_configured_port()), dontSendNotification);
 	tcpPortEditor.setInputFilter(new TextEditor::LengthAndCharacterRestriction(5, "1234567890"), true);
 	tcpPortEditor.setVisible(true);
 	addAndMakeVisible(tcpPortEditor);
@@ -128,11 +154,15 @@ ConfigureHardwareComponent::ConfigureHardwareComponent(ConfigureHardwareWindow &
 	setSize(initialSize.x, initialSize.y);
 	/* The dialog owns the OK/Cancel buttons; this component only owns the form. */
 	/* Configuration is applied through applyConfiguration(). */
-	}
+}
 
 bool ConfigureHardwareComponent::applyConfiguration()
+{
+	if (hardwareInterfaceSelector.getSelectedId() == static_cast<int>(parentCANDrivers.size()))
 	{
-		if (hardwareInterfaceSelector.getSelectedId() == static_cast<int>(parentCANDrivers.size()))
+		const bool discovery = tcpConnectionModeSelector.getSelectedId() == 1;
+		auto tcpDriver = std::static_pointer_cast<TcpCANPlugin>(parentCANDrivers.back());
+		if (!discovery)
 		{
 			const auto port = tcpPortEditor.getText().getIntValue();
 			if (tcpHostEditor.getText().isEmpty() || port < 1 || port > 65535)
@@ -140,53 +170,55 @@ bool ConfigureHardwareComponent::applyConfiguration()
 				AlertWindow::showMessageBoxAsync(AlertWindow::WarningIcon, "Invalid TCP settings", "Enter a host and a port between 1 and 65535.");
 				return false;
 			}
-			std::static_pointer_cast<TcpCANPlugin>(parentCANDrivers.back())->reconfigure(tcpHostEditor.getText().toStdString(), static_cast<std::uint16_t>(port));
+			tcpDriver->reconfigure(tcpHostEditor.getText().toStdString(), static_cast<std::uint16_t>(port));
 		}
+		parentWindow.parentServer.set_tcp_discovery_enabled(discovery);
+	}
 #ifdef JUCE_WINDOWS
-		if (3 == hardwareInterfaceSelector.getSelectedId()) // TouCAN
-		{
-			int serial = touCANSerialEditor.getText().trim().getIntValue();
-			std::static_pointer_cast<isobus::TouCANPlugin>(parentCANDrivers.at(hardwareInterfaceSelector.getSelectedId() - 1))->reconfigure(0, static_cast<std::uint32_t>(serial));
-		}
+	if (3 == hardwareInterfaceSelector.getSelectedId()) // TouCAN
+	{
+		int serial = touCANSerialEditor.getText().trim().getIntValue();
+		std::static_pointer_cast<isobus::TouCANPlugin>(parentCANDrivers.at(hardwareInterfaceSelector.getSelectedId() - 1))->reconfigure(0, static_cast<std::uint32_t>(serial));
+	}
 
+	if (nullptr != isobus::CANHardwareInterface::get_assigned_can_channel_frame_handler(0))
+	{
+		isobus::CANHardwareInterface::unassign_can_channel_frame_handler(0);
+	}
+	isobus::CANHardwareInterface::assign_can_channel_frame_handler(0, parentCANDrivers.at(hardwareInterfaceSelector.getSelectedId() - 1));
+	isobus::CANStackLogger::info("Updated assigned CAN driver.");
+#elif JUCE_LINUX && !JUCE_ANDROID
+	if (hardwareInterfaceSelector.getSelectedId() == 2)
+	{
 		if (nullptr != isobus::CANHardwareInterface::get_assigned_can_channel_frame_handler(0))
 		{
 			isobus::CANHardwareInterface::unassign_can_channel_frame_handler(0);
 		}
-		isobus::CANHardwareInterface::assign_can_channel_frame_handler(0, parentCANDrivers.at(hardwareInterfaceSelector.getSelectedId() - 1));
-		isobus::CANStackLogger::info("Updated assigned CAN driver.");
-#elif JUCE_LINUX && !JUCE_ANDROID
-		if (hardwareInterfaceSelector.getSelectedId() == 2)
+		isobus::CANHardwareInterface::assign_can_channel_frame_handler(0, parentCANDrivers.back());
+	}
+	else
+	{
+		std::static_pointer_cast<isobus::SocketCANInterface>(parentCANDrivers.at(0))->set_name(socketCANNameEditor.getText().toStdString());
+		if (nullptr != isobus::CANHardwareInterface::get_assigned_can_channel_frame_handler(0))
 		{
-			if (nullptr != isobus::CANHardwareInterface::get_assigned_can_channel_frame_handler(0))
-			{
-				isobus::CANHardwareInterface::unassign_can_channel_frame_handler(0);
-			}
-			isobus::CANHardwareInterface::assign_can_channel_frame_handler(0, parentCANDrivers.back());
+			isobus::CANHardwareInterface::unassign_can_channel_frame_handler(0);
 		}
-		else
-		{
-			std::static_pointer_cast<isobus::SocketCANInterface>(parentCANDrivers.at(0))->set_name(socketCANNameEditor.getText().toStdString());
-			if (nullptr != isobus::CANHardwareInterface::get_assigned_can_channel_frame_handler(0))
-			{
-				isobus::CANHardwareInterface::unassign_can_channel_frame_handler(0);
-			}
-			isobus::CANHardwareInterface::assign_can_channel_frame_handler(0, parentCANDrivers.at(0));
-			isobus::CANStackLogger::info("Updated socket CAN interface name to: " + socketCANNameEditor.getText().toStdString());
-		}
+		isobus::CANHardwareInterface::assign_can_channel_frame_handler(0, parentCANDrivers.at(0));
+		isobus::CANStackLogger::info("Updated socket CAN interface name to: " + socketCANNameEditor.getText().toStdString());
+	}
 #elif JUCE_ANDROID
-		if (hardwareInterfaceSelector.getSelectedId() == 1)
+	if (hardwareInterfaceSelector.getSelectedId() == 1)
+	{
+		if (nullptr != isobus::CANHardwareInterface::get_assigned_can_channel_frame_handler(0))
 		{
-			if (nullptr != isobus::CANHardwareInterface::get_assigned_can_channel_frame_handler(0))
-			{
-				isobus::CANHardwareInterface::unassign_can_channel_frame_handler(0);
-			}
-			isobus::CANHardwareInterface::assign_can_channel_frame_handler(0, parentCANDrivers.front());
-			isobus::CANStackLogger::info("Updated Android TCP CAN transport to " + tcpHostEditor.getText().toStdString() + ":" + tcpPortEditor.getText().toStdString());
+			isobus::CANHardwareInterface::unassign_can_channel_frame_handler(0);
 		}
+		isobus::CANHardwareInterface::assign_can_channel_frame_handler(0, parentCANDrivers.front());
+		isobus::CANStackLogger::info("Updated Android TCP CAN transport to " + tcpHostEditor.getText().toStdString() + ":" + tcpPortEditor.getText().toStdString());
+	}
 #endif
-		parentWindow.parentServer.save_settings();
-		return true;
+	parentWindow.parentServer.save_settings();
+	return true;
 }
 
 void ConfigureHardwareComponent::paint(Graphics &graphics)
@@ -207,8 +239,15 @@ void ConfigureHardwareComponent::paint(Graphics &graphics)
 	}
 	if (hardwareInterfaceSelector.getSelectedId() == static_cast<int>(parentCANDrivers.size()))
 	{
-		graphics.drawFittedText("TCP Host", tcpHostEditor.getBounds().getX(), tcpHostEditor.getBounds().getY() - 14, tcpHostEditor.getBounds().getWidth(), 12, Justification::centredLeft, 1);
-		graphics.drawFittedText("TCP Port", tcpPortEditor.getBounds().getX(), tcpPortEditor.getBounds().getY() - 14, tcpPortEditor.getBounds().getWidth(), 12, Justification::centredLeft, 1);
+		graphics.drawFittedText("TCP Connection Mode", tcpConnectionModeSelector.getBounds().getX(), tcpConnectionModeSelector.getBounds().getY() - 14, tcpConnectionModeSelector.getBounds().getWidth(), 12, Justification::centredLeft, 1);
+		if (tcpHostEditor.isVisible())
+		{
+			graphics.drawFittedText("TCP Host", tcpHostEditor.getBounds().getX(), tcpHostEditor.getBounds().getY() - 14, tcpHostEditor.getBounds().getWidth(), 12, Justification::centredLeft, 1);
+		}
+		if (tcpPortEditor.isVisible())
+		{
+			graphics.drawFittedText("TCP Port", tcpPortEditor.getBounds().getX(), tcpPortEditor.getBounds().getY() - 14, tcpPortEditor.getBounds().getWidth(), 12, Justification::centredLeft, 1);
+		}
 	}
 #elif JUCE_LINUX && !JUCE_ANDROID
 	graphics.drawFittedText("Hardware Driver", hardwareInterfaceSelector.getBounds().getX(), hardwareInterfaceSelector.getBounds().getY() - 14, hardwareInterfaceSelector.getBounds().getWidth(), 12, Justification::centredLeft, 1);
@@ -218,13 +257,27 @@ void ConfigureHardwareComponent::paint(Graphics &graphics)
 	}
 	else
 	{
-		graphics.drawFittedText("TCP Host", tcpHostEditor.getBounds().getX(), tcpHostEditor.getBounds().getY() - 14, tcpHostEditor.getBounds().getWidth(), 12, Justification::centredLeft, 1);
-		graphics.drawFittedText("TCP Port", tcpPortEditor.getBounds().getX(), tcpPortEditor.getBounds().getY() - 14, tcpPortEditor.getBounds().getWidth(), 12, Justification::centredLeft, 1);
+		graphics.drawFittedText("TCP Connection Mode", tcpConnectionModeSelector.getBounds().getX(), tcpConnectionModeSelector.getBounds().getY() - 14, tcpConnectionModeSelector.getBounds().getWidth(), 12, Justification::centredLeft, 1);
+		if (tcpHostEditor.isVisible())
+		{
+			graphics.drawFittedText("TCP Host", tcpHostEditor.getBounds().getX(), tcpHostEditor.getBounds().getY() - 14, tcpHostEditor.getBounds().getWidth(), 12, Justification::centredLeft, 1);
+		}
+		if (tcpPortEditor.isVisible())
+		{
+			graphics.drawFittedText("TCP Port", tcpPortEditor.getBounds().getX(), tcpPortEditor.getBounds().getY() - 14, tcpPortEditor.getBounds().getWidth(), 12, Justification::centredLeft, 1);
+		}
 	}
 #elif JUCE_ANDROID
 	graphics.drawFittedText("Hardware Driver", hardwareInterfaceSelector.getBounds().getX(), hardwareInterfaceSelector.getBounds().getY() - 14, hardwareInterfaceSelector.getBounds().getWidth(), 12, Justification::centredLeft, 1);
-	graphics.drawFittedText("TCP Host", tcpHostEditor.getBounds().getX(), tcpHostEditor.getBounds().getY() - 14, tcpHostEditor.getBounds().getWidth(), 12, Justification::centredLeft, 1);
-	graphics.drawFittedText("TCP Port", tcpPortEditor.getBounds().getX(), tcpPortEditor.getBounds().getY() - 14, tcpPortEditor.getBounds().getWidth(), 12, Justification::centredLeft, 1);
+	graphics.drawFittedText("TCP Connection Mode", tcpConnectionModeSelector.getBounds().getX(), tcpConnectionModeSelector.getBounds().getY() - 14, tcpConnectionModeSelector.getBounds().getWidth(), 12, Justification::centredLeft, 1);
+	if (tcpHostEditor.isVisible())
+	{
+		graphics.drawFittedText("TCP Host", tcpHostEditor.getBounds().getX(), tcpHostEditor.getBounds().getY() - 14, tcpHostEditor.getBounds().getWidth(), 12, Justification::centredLeft, 1);
+	}
+	if (tcpPortEditor.isVisible())
+	{
+		graphics.drawFittedText("TCP Port", tcpPortEditor.getBounds().getX(), tcpPortEditor.getBounds().getY() - 14, tcpPortEditor.getBounds().getWidth(), 12, Justification::centredLeft, 1);
+	}
 #endif
 }
 
@@ -237,33 +290,78 @@ void ConfigureHardwareComponent::resized()
 	nextY += ResponsiveDialogWindow::dialogFieldHeight + rowSpacing;
 
 #ifdef JUCE_WINDOWS
-	if (touCANSerialEditor.isVisible()) { touCANSerialEditor.setBounds(10, nextY, fieldWidth, ResponsiveDialogWindow::dialogFieldHeight); nextY += ResponsiveDialogWindow::dialogFieldHeight + rowSpacing; }
-	if (tcpHostEditor.isVisible()) { tcpHostEditor.setBounds(10, nextY, fieldWidth, ResponsiveDialogWindow::dialogFieldHeight); nextY += ResponsiveDialogWindow::dialogFieldHeight + rowSpacing; }
-	if (tcpPortEditor.isVisible()) { tcpPortEditor.setBounds(10, nextY, fieldWidth, ResponsiveDialogWindow::dialogFieldHeight); }
+	if (tcpConnectionModeSelector.isVisible())
+	{
+		tcpConnectionModeSelector.setBounds(10, nextY, fieldWidth, ResponsiveDialogWindow::dialogFieldHeight);
+		nextY += ResponsiveDialogWindow::dialogFieldHeight + rowSpacing;
+	}
+	if (touCANSerialEditor.isVisible())
+	{
+		touCANSerialEditor.setBounds(10, nextY, fieldWidth, ResponsiveDialogWindow::dialogFieldHeight);
+		nextY += ResponsiveDialogWindow::dialogFieldHeight + rowSpacing;
+	}
+	if (tcpHostEditor.isVisible())
+	{
+		tcpHostEditor.setBounds(10, nextY, fieldWidth, ResponsiveDialogWindow::dialogFieldHeight);
+		nextY += ResponsiveDialogWindow::dialogFieldHeight + rowSpacing;
+	}
+	if (tcpPortEditor.isVisible())
+	{
+		tcpPortEditor.setBounds(10, nextY, fieldWidth, ResponsiveDialogWindow::dialogFieldHeight);
+	}
 #elif JUCE_LINUX && !JUCE_ANDROID
-	if (socketCANNameEditor.isVisible()) { socketCANNameEditor.setBounds(10, nextY, fieldWidth, ResponsiveDialogWindow::dialogFieldHeight); nextY += ResponsiveDialogWindow::dialogFieldHeight + rowSpacing; }
-	if (tcpHostEditor.isVisible()) { tcpHostEditor.setBounds(10, nextY, fieldWidth, ResponsiveDialogWindow::dialogFieldHeight); nextY += ResponsiveDialogWindow::dialogFieldHeight + rowSpacing; }
-	if (tcpPortEditor.isVisible()) { tcpPortEditor.setBounds(10, nextY, fieldWidth, ResponsiveDialogWindow::dialogFieldHeight); }
+	if (tcpConnectionModeSelector.isVisible())
+	{
+		tcpConnectionModeSelector.setBounds(10, nextY, fieldWidth, ResponsiveDialogWindow::dialogFieldHeight);
+		nextY += ResponsiveDialogWindow::dialogFieldHeight + rowSpacing;
+	}
+	if (socketCANNameEditor.isVisible())
+	{
+		socketCANNameEditor.setBounds(10, nextY, fieldWidth, ResponsiveDialogWindow::dialogFieldHeight);
+		nextY += ResponsiveDialogWindow::dialogFieldHeight + rowSpacing;
+	}
+	if (tcpHostEditor.isVisible())
+	{
+		tcpHostEditor.setBounds(10, nextY, fieldWidth, ResponsiveDialogWindow::dialogFieldHeight);
+		nextY += ResponsiveDialogWindow::dialogFieldHeight + rowSpacing;
+	}
+	if (tcpPortEditor.isVisible())
+	{
+		tcpPortEditor.setBounds(10, nextY, fieldWidth, ResponsiveDialogWindow::dialogFieldHeight);
+	}
 #elif JUCE_ANDROID
-	tcpHostEditor.setBounds(10, nextY, fieldWidth, ResponsiveDialogWindow::dialogFieldHeight); nextY += ResponsiveDialogWindow::dialogFieldHeight + rowSpacing;
-	tcpPortEditor.setBounds(10, nextY, fieldWidth, ResponsiveDialogWindow::dialogFieldHeight);
+	if (tcpConnectionModeSelector.isVisible())
+	{
+		tcpConnectionModeSelector.setBounds(10, nextY, fieldWidth, ResponsiveDialogWindow::dialogFieldHeight);
+		nextY += ResponsiveDialogWindow::dialogFieldHeight + rowSpacing;
+	}
+	if (tcpHostEditor.isVisible())
+	{
+		tcpHostEditor.setBounds(10, nextY, fieldWidth, ResponsiveDialogWindow::dialogFieldHeight);
+		nextY += ResponsiveDialogWindow::dialogFieldHeight + rowSpacing;
+	}
+	if (tcpPortEditor.isVisible())
+		tcpPortEditor.setBounds(10, nextY, fieldWidth, ResponsiveDialogWindow::dialogFieldHeight);
 #endif
-
 }
 
 juce::Point<int> ConfigureHardwareComponent::preferredSize() const
 {
 	int rows = 1;
 #ifdef JUCE_WINDOWS
+	rows += tcpConnectionModeSelector.isVisible() ? 1 : 0;
 	rows += touCANSerialEditor.isVisible() ? 1 : 0;
 	rows += tcpHostEditor.isVisible() ? 1 : 0;
 	rows += tcpPortEditor.isVisible() ? 1 : 0;
 #elif JUCE_LINUX && !JUCE_ANDROID
+	rows += tcpConnectionModeSelector.isVisible() ? 1 : 0;
 	rows += socketCANNameEditor.isVisible() ? 1 : 0;
 	rows += tcpHostEditor.isVisible() ? 1 : 0;
 	rows += tcpPortEditor.isVisible() ? 1 : 0;
 #elif JUCE_ANDROID
-	rows += 2;
+	rows += tcpConnectionModeSelector.isVisible() ? 1 : 0;
+	rows += tcpHostEditor.isVisible() ? 1 : 0;
+	rows += tcpPortEditor.isVisible() ? 1 : 0;
 #endif
 	const int rowHeight = ResponsiveDialogWindow::dialogFieldHeight + ResponsiveDialogWindow::dialogFieldSpacing + 16;
 	const int lastFieldEnd = 56 + rows * rowHeight - 30;

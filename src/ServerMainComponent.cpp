@@ -136,6 +136,9 @@ ServerMainComponent::ServerMainComponent(
 
 ServerMainComponent::~ServerMainComponent()
 {
+	stopTimer();
+	tcpGatewayDiscovery.reset();
+	tcpDiscoveryPending = false;
 	if (softKeyMaskChangeListenerRegistered)
 	{
 		get_on_change_active_softkey_mask_event_dispatcher().remove_listener(softKeyMaskChangeListener);
@@ -723,6 +726,49 @@ void ServerMainComponent::timerCallback()
 {
 	logger.pump_pending_messages();
 
+	if (tcpDiscoveryPending && tcpGatewayDiscovery)
+	{
+		if (const auto endpoint = tcpGatewayDiscovery->get_endpoint())
+		{
+			if (auto tcpDriver = std::dynamic_pointer_cast<TcpCANPlugin>(isobus::CANHardwareInterface::get_assigned_can_channel_frame_handler(0)))
+			{
+				tcpDriver->use_discovered_endpoint(endpoint->host, endpoint->port);
+				isobus::CANStackLogger::info("Found CAN TCP gateway at " + endpoint->host + ":" + std::to_string(endpoint->port));
+				tcpGatewayDiscovery.reset();
+				tcpDiscoveryPending = false;
+				if (!start_can_interface(true))
+				{
+					isobus::CANStackLogger::warn("Could not start CAN interface after discovery; restarting discovery");
+					start_can_interface();
+				}
+			}
+		}
+	}
+
+	auto tcpDriver = std::dynamic_pointer_cast<TcpCANPlugin>(isobus::CANHardwareInterface::get_assigned_can_channel_frame_handler(0));
+	if (hasStartBeenCalled && tcpDiscoveryEnabled && tcpDriver)
+	{
+		if (tcpDriver->is_connected())
+		{
+			tcpDisconnectTimerActive = false;
+		}
+		else if (!tcpDiscoveryPending)
+		{
+			const auto now = std::chrono::steady_clock::now();
+			if (!tcpDisconnectTimerActive)
+			{
+				tcpDisconnectTimerActive = true;
+				tcpDisconnectedSince = now;
+			}
+			else if (now - tcpDisconnectedSince >= std::chrono::seconds(2))
+			{
+				isobus::CANStackLogger::warn("CAN TCP gateway connection unavailable; returning to discovery");
+				stop_can_interface();
+				start_can_interface();
+			}
+		}
+	}
+
 	if ((isobus::SystemTiming::time_expired_ms(statusMessageTimestamp_ms, 1000)) &&
 	    (send_status_message()))
 	{
@@ -730,7 +776,11 @@ void ServerMainComponent::timerCallback()
 	}
 
 	auto activeCANDriver = isobus::CANHardwareInterface::get_assigned_can_channel_frame_handler(0);
-	bool isAdapterConnected = (nullptr != activeCANDriver) && activeCANDriver->get_is_valid();
+	bool isAdapterConnected = false;
+	if (auto tcp = std::dynamic_pointer_cast<TcpCANPlugin>(activeCANDriver))
+		isAdapterConnected = tcp->is_connected();
+	else
+		isAdapterConnected = (nullptr != activeCANDriver) && activeCANDriver->get_is_valid();
 	bool isInterfaceRunning = isobus::CANHardwareInterface::is_running();
 
 	if ((isAdapterConnected != canAdapterConnected) || (isInterfaceRunning != canInterfaceRunning))
@@ -969,7 +1019,7 @@ void ServerMainComponent::resized()
 	const auto pickerScale = static_cast<float>(working_set_selector_scale());
 	const int dataMaskWidth = get_data_mask_area_size_x_pixels();
 	const int dataMaskHeight = get_data_mask_area_size_y_pixels();
-	const int softKeyWidth = 2 * SoftKeyMaskDimensions::PADDING + get_physical_soft_key_columns() * (SoftKeyMaskDimensions::PADDING + get_soft_key_descriptor_y_pixel_height());
+	const int softKeyWidth = softKeyMaskDimensions.total_width();
 	const int pickerLeft = juce::roundToInt(WorkingSetSelectorComponent::WIDTH * pickerScale);
 	const int dataMaskLeft = pickerLeft;
 	const int softKeyLeft = dataMaskLeft + juce::roundToInt(dataMaskWidth * scale);
@@ -1123,13 +1173,13 @@ void ServerMainComponent::getCommandInfo(juce::CommandID commandID, ApplicationC
 
 		case CommandIDs::ConfigureCANHardware:
 		{
-			result.setInfo("Configure CAN Hardware", "Selects which CAN hardware to connect to", "Configure", hasStartBeenCalled ? ApplicationCommandInfo::CommandFlags::isDisabled : 0);
+			result.setInfo("Configure CAN Hardware", "Selects which CAN hardware to connect to", "Configure", (hasStartBeenCalled || tcpDiscoveryPending) ? ApplicationCommandInfo::CommandFlags::isDisabled : 0);
 		}
 		break;
 
 		case CommandIDs::StartStop:
 		{
-			result.setInfo("Start/Stop", "Starts or stops the CAN interface", "Control", hasStartBeenCalled ? ApplicationCommandInfo::CommandFlags::isTicked : 0);
+			result.setInfo("Start/Stop", "Starts or stops the CAN interface", "Control", ((hasStartBeenCalled || tcpDiscoveryPending) ? ApplicationCommandInfo::CommandFlags::isTicked : 0));
 		}
 		break;
 
@@ -1246,7 +1296,31 @@ bool ServerMainComponent::perform(const InvocationInfo &info)
 			dialog.getTextEditor("Number of Physical Soft Key columns")->setInputRestrictions(1, "1234567890");
 			dialog.getTextEditor("Number of Physical Soft Key rows")->setInputRestrictions(2, "1234567890");
 
-			dialog.addButton("OK", 3);
+			dialog.addButton("OK", 3, [this]
+			{
+				const auto readValue = [this](const juce::String& key)
+				{
+					return capabilitiesDialog->getTextEditorContents(key).getIntValue();
+				};
+				const int dataMaskSize = readValue("Data Mask Size (height and width)");
+				const int columns = readValue("Number of Physical Soft Key columns");
+				const int rows = readValue("Number of Physical Soft Key rows");
+				const int keyWidth = readValue("Soft Key Designator Width");
+				const int keyHeight = readValue("Soft Key Designator Height");
+				const bool valid = dataMaskSize >= 1 && dataMaskSize <= 9999 &&
+				  columns >= 1 && columns <= 9 && rows >= 1 && rows <= 99 &&
+				  columns * rows <= 255 && keyWidth >= 60 && keyWidth <= 255 &&
+				  keyHeight >= 60 && keyHeight <= 255;
+				if (!valid)
+				{
+					juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon,
+					  "Invalid configuration",
+					  "Use a data mask size from 1 to 9999, 1-9 columns, 1-99 rows (up to 255 keys), and key dimensions from 60 to 255 pixels.",
+					  "OK", this);
+					return false;
+				}
+				return true;
+			});
 			dialog.addButton("Cancel", 0);
 			dialog.showModal(*this, [this](int result) {
 				LanguageCommandConfigClosed{ *this }(result);
@@ -1415,8 +1489,9 @@ bool ServerMainComponent::perform(const InvocationInfo &info)
 
 		case static_cast<int>(CommandIDs::StartStop):
 		{
-			if (hasStartBeenCalled)
+			if (hasStartBeenCalled || tcpDiscoveryPending)
 			{
+				if (tcpDiscoveryPending) { tcpDiscoveryPending = false; tcpGatewayDiscovery.reset(); isobus::CANStackLogger::info("Stopped CAN TCP gateway discovery"); }
 				isobus::CANStackLogger::info("Stopping CAN interface");
 				// Stop GUI-driven CAN activity before tearing down the transport.
 				dataMaskRenderer.set_has_started(false);
@@ -1733,16 +1808,18 @@ void ServerMainComponent::LanguageCommandConfigClosed::operator()(int result) co
 
 			mParent.softKeyMaskDimensions.columnCount = mParent.capabilitiesDialog->getTextEditorContents("Number of Physical Soft Key columns").getIntValue();
 			mParent.softKeyMaskDimensions.rowCount = mParent.capabilitiesDialog->getTextEditorContents("Number of Physical Soft Key rows").getIntValue();
-			if (mParent.get_number_of_physical_soft_keys() != mParent.softKeyMaskDimensions.key_count())
+			if (mParent.versionToReport >= isobus::VirtualTerminalBase::VTVersion::Version4 &&
+			    mParent.softKeyMaskDimensions.key_count() < 6)
 			{
-				mParent.softKeyMaskDimensions.rowCount = (mParent.get_number_of_physical_soft_keys() / mParent.softKeyMaskDimensions.columnCount);
+				mParent.softKeyMaskDimensions.rowCount = (6 + mParent.softKeyMaskDimensions.columnCount - 1) / mParent.softKeyMaskDimensions.columnCount;
 			}
 
 			mParent.softKeyMaskDimensions.keyWidth = mParent.capabilitiesDialog->getTextEditorContents("Soft Key Designator Width").getIntValue();
 			mParent.softKeyMaskDimensions.keyHeight = mParent.capabilitiesDialog->getTextEditorContents("Soft Key Designator Height").getIntValue();
 			JuceManagedWorkingSetCache::set_softkey_mask_dimension_info(mParent.softKeyMaskDimensions);
 
-			mParent.softKeyMaskRenderer.setSize(mParent.softKeyMaskDimensions.total_width(), dataMaskSize.getIntValue());
+			mParent.softKeyMaskRenderer.setSize(mParent.softKeyMaskDimensions.total_width(),
+				                            dataMaskSize.getIntValue());
 
 			mParent.vtNumber = mParent.capabilitiesDialog->getTextEditorContents("VT number").getIntValue();
 			if (mParent.vtNumber > 32)
@@ -1766,6 +1843,8 @@ void ServerMainComponent::LanguageCommandConfigClosed::operator()(int result) co
 			mParent.save_settings();
 			mParent.apply_display_size();
 			mParent.repaint_data_and_soft_key_mask();
+			mParent.resized();
+			mParent.repaint();
 		}
 		break;
 
@@ -2164,8 +2243,25 @@ void ServerMainComponent::update_ack_button_visibility()
 	workingSetSelector.set_ack_button_visible(showAckButton && is_active_alarm_mask());
 }
 
-bool ServerMainComponent::start_can_interface()
+bool ServerMainComponent::start_can_interface(bool discoveryEndpointReady)
 {
+	auto assignedDriver = isobus::CANHardwareInterface::get_assigned_can_channel_frame_handler(0);
+	auto tcpDriver = std::dynamic_pointer_cast<TcpCANPlugin>(assignedDriver);
+	if (!discoveryEndpointReady && tcpDiscoveryEnabled && tcpDriver)
+	{
+		tcpDisconnectTimerActive = false;
+		if (!tcpGatewayDiscovery) tcpGatewayDiscovery = std::make_unique<TcpGatewayDiscovery>();
+		if (!tcpGatewayDiscovery->start())
+		{
+			tcpGatewayDiscovery.reset();
+			isobus::CANStackLogger::error("Could not start CAN TCP gateway discovery");
+			return false;
+		}
+		tcpDiscoveryPending = true;
+		isobus::CANStackLogger::info("Searching for CAN TCP gateway...");
+		mCommandManager.commandStatusChanged();
+		return true;
+	}
 	isobus::CANStackLogger::info("Starting CAN interface");
 	if (!isobus::CANHardwareInterface::start())
 	{
@@ -2179,6 +2275,33 @@ bool ServerMainComponent::start_can_interface()
 	dataMaskRenderer.set_has_started(true);
 	hasStartBeenCalled = true;
 	return true;
+}
+
+void ServerMainComponent::stop_can_interface()
+{
+	dataMaskRenderer.set_has_started(false);
+	hasStartBeenCalled = false;
+	tcpDisconnectTimerActive = false;
+#ifdef JUCE_WINDOWS
+	auto canDriver0 = isobus::CANHardwareInterface::get_assigned_can_channel_frame_handler(0);
+	auto canDriver1 = isobus::CANHardwareInterface::get_assigned_can_channel_frame_handler(1);
+	auto canDriver2 = isobus::CANHardwareInterface::get_assigned_can_channel_frame_handler(2);
+	auto canDriver3 = isobus::CANHardwareInterface::get_assigned_can_channel_frame_handler(3);
+#else
+	auto canDriver = isobus::CANHardwareInterface::get_assigned_can_channel_frame_handler(0);
+#endif
+	for (const auto &driver : parentCANDrivers)
+		if (auto tcp = std::dynamic_pointer_cast<TcpCANPlugin>(driver))
+			tcp->close();
+	isobus::CANHardwareInterface::stop();
+#ifdef JUCE_WINDOWS
+	isobus::CANHardwareInterface::assign_can_channel_frame_handler(0, canDriver0);
+	isobus::CANHardwareInterface::assign_can_channel_frame_handler(1, canDriver1);
+	isobus::CANHardwareInterface::assign_can_channel_frame_handler(2, canDriver2);
+	isobus::CANHardwareInterface::assign_can_channel_frame_handler(3, canDriver3);
+#else
+	isobus::CANHardwareInterface::assign_can_channel_frame_handler(0, canDriver);
+#endif
 }
 
 void ServerMainComponent::check_load_settings(std::shared_ptr<ValueTree> settings)
@@ -2271,7 +2394,7 @@ void ServerMainComponent::check_load_settings(std::shared_ptr<ValueTree> setting
 			if (!child.getProperty("DataMaskRenderAreaSize").isVoid())
 			{
 				dataMaskRenderer.setSize(static_cast<std::uint16_t>(static_cast<int>(child.getProperty("DataMaskRenderAreaSize"))), static_cast<std::uint16_t>(static_cast<int>(child.getProperty("DataMaskRenderAreaSize"))));
-				softKeyMaskRenderer.setSize(2 * SoftKeyMaskDimensions::PADDING + get_physical_soft_key_columns() * (SoftKeyMaskDimensions::PADDING + get_soft_key_descriptor_y_pixel_height()),
+				softKeyMaskRenderer.setSize(softKeyMaskDimensions.total_width(),
 				                            static_cast<int>(child.getProperty("DataMaskRenderAreaSize")));
 			}
 
@@ -2286,12 +2409,20 @@ void ServerMainComponent::check_load_settings(std::shared_ptr<ValueTree> setting
 					displayScalePercent = juce::jlimit(100, 400, savedScale);
 				}
 			}
-			if (!parentCANDrivers.empty() && (!child.getProperty("TCPHost").isVoid() || !child.getProperty("TCPPort").isVoid()))
+			if (!parentCANDrivers.empty() && (!child.getProperty("TCPHost").isVoid() || !child.getProperty("TCPPort").isVoid() || !child.getProperty("TCPMode").isVoid()))
 			{
 				auto tcpDriver = std::static_pointer_cast<TcpCANPlugin>(parentCANDrivers.back());
-				auto host = child.getProperty("TCPHost").isVoid() ? String(tcpDriver->get_host()) : child.getProperty("TCPHost").toString();
-				auto port = child.getProperty("TCPPort").isVoid() ? tcpDriver->get_port() : static_cast<int>(child.getProperty("TCPPort"));
-				tcpDriver->reconfigure(host.toStdString(), static_cast<std::uint16_t>(juce::jlimit(1, 65535, port)));
+				auto host = child.getProperty("TCPHost").isVoid() ? String(tcpDriver->get_configured_host()) : child.getProperty("TCPHost").toString();
+				const bool hasSavedMode = !child.getProperty("TCPMode").isVoid();
+				const bool hasLegacyManualSettings = !child.getProperty("TCPHost").isVoid() || !child.getProperty("TCPPort").isVoid();
+				tcpDiscoveryEnabled = hasSavedMode
+				  ? child.getProperty("TCPMode").toString().equalsIgnoreCase("Discovery")
+				  : !hasLegacyManualSettings;
+				if (!tcpDiscoveryEnabled)
+				{
+					auto port = child.getProperty("TCPPort").isVoid() ? tcpDriver->get_configured_port() : static_cast<int>(child.getProperty("TCPPort"));
+					tcpDriver->reconfigure(host.toStdString(), static_cast<std::uint16_t>(juce::jlimit(1, 65535, port)));
+				}
 			}
 			if (!child.getProperty("CANDriver").isVoid())
 			{
@@ -2475,8 +2606,11 @@ void ServerMainComponent::save_settings()
 		if (!parentCANDrivers.empty())
 		{
 			auto tcpDriver = std::static_pointer_cast<TcpCANPlugin>(parentCANDrivers.back());
-			hardwareSettings.setProperty("TCPHost", String(tcpDriver->get_host()), nullptr);
-			hardwareSettings.setProperty("TCPPort", static_cast<int>(tcpDriver->get_port()), nullptr);
+			hardwareSettings.setProperty("TCPMode", tcpDiscoveryEnabled ? "Discovery" : "Manual", nullptr);
+			{
+				hardwareSettings.setProperty("TCPHost", String(tcpDriver->get_configured_host()), nullptr);
+				hardwareSettings.setProperty("TCPPort", static_cast<int>(tcpDriver->get_configured_port()), nullptr);
+			}
 		}
 
 #ifdef JUCE_WINDOWS
@@ -2696,9 +2830,7 @@ double ServerMainComponent::display_scale() const
 	// is not accounted for here (its own scale is a floor applied afterwards, not an input to
 	// this fit), so at very small window sizes the picker can end up slightly wider than the
 	// space this assumed, trading a little mask precision to keep the picker touch usable.
-	const int isoWidth = get_data_mask_area_size_x_pixels() +
-	  (2 * SoftKeyMaskDimensions::PADDING) +
-	  (get_physical_soft_key_columns() * (SoftKeyMaskDimensions::PADDING + get_soft_key_descriptor_y_pixel_height()));
+	const int isoWidth = get_data_mask_area_size_x_pixels() + softKeyMaskDimensions.total_width();
 	const int isoHeight = get_data_mask_area_size_y_pixels();
 
 	if ((isoWidth <= 0) || (isoHeight <= 0) || (getWidth() <= 0) || (getHeight() <= 0))

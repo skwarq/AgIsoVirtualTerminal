@@ -7,27 +7,28 @@
 
 namespace
 {
-constexpr int wireFrameSize = 16;
-constexpr std::uint32_t extendedFrameFlag = 0x80000000U;
+	constexpr int wireFrameSize = 16;
+	constexpr std::uint32_t extendedFrameFlag = 0x80000000U;
 
-std::uint32_t readBigEndian32(const std::uint8_t *data)
-{
-	return (static_cast<std::uint32_t>(data[0]) << 24) |
-	       (static_cast<std::uint32_t>(data[1]) << 16) |
-	       (static_cast<std::uint32_t>(data[2]) << 8) |
-	       static_cast<std::uint32_t>(data[3]);
-}
+	std::uint32_t readBigEndian32(const std::uint8_t *data)
+	{
+		return (static_cast<std::uint32_t>(data[0]) << 24) |
+		  (static_cast<std::uint32_t>(data[1]) << 16) |
+		  (static_cast<std::uint32_t>(data[2]) << 8) |
+		  static_cast<std::uint32_t>(data[3]);
+	}
 
-void writeBigEndian32(std::uint8_t *data, std::uint32_t value)
-{
-	data[0] = static_cast<std::uint8_t>(value >> 24);
-	data[1] = static_cast<std::uint8_t>(value >> 16);
-	data[2] = static_cast<std::uint8_t>(value >> 8);
-	data[3] = static_cast<std::uint8_t>(value);
-}
+	void writeBigEndian32(std::uint8_t *data, std::uint32_t value)
+	{
+		data[0] = static_cast<std::uint8_t>(value >> 24);
+		data[1] = static_cast<std::uint8_t>(value >> 16);
+		data[2] = static_cast<std::uint8_t>(value >> 8);
+		data[3] = static_cast<std::uint8_t>(value);
+	}
 } // namespace
 
-TcpCANPlugin::TcpCANPlugin(std::string host, std::uint16_t port) : host(std::move(host)), port(port)
+TcpCANPlugin::TcpCANPlugin(std::string host, std::uint16_t port) :
+  host(host), configuredHost(std::move(host)), port(port), configuredPort(port)
 {
 }
 
@@ -48,9 +49,15 @@ bool TcpCANPlugin::get_is_valid() const
 	return openRequested.load();
 }
 
+bool TcpCANPlugin::is_connected() const
+{
+	return valid.load();
+}
+
 void TcpCANPlugin::close()
 {
-	std::lock_guard lock(connectionMutex);
+	std::lock_guard writeLock(writeMutex);
+	std::lock_guard connectionLock(connectionMutex);
 	openRequested.store(false);
 	if (valid.exchange(false))
 	{
@@ -60,6 +67,13 @@ void TcpCANPlugin::close()
 }
 
 void TcpCANPlugin::mark_disconnected()
+{
+	std::lock_guard writeLock(writeMutex);
+	std::lock_guard connectionLock(connectionMutex);
+	mark_disconnected_locked();
+}
+
+void TcpCANPlugin::mark_disconnected_locked()
 {
 	if (valid.exchange(false))
 	{
@@ -112,9 +126,19 @@ bool TcpCANPlugin::read_exact(void *destination, int size)
 	int offset = 0;
 	while (offset < size)
 	{
-		if (!socket.waitUntilReady(true, 100))
+		const auto readiness = socket.waitUntilReady(true, 100);
+		if (readiness < 0)
 		{
+			mark_disconnected();
 			return false;
+		}
+		if (readiness == 0)
+		{
+			// An idle connection is fine between frames, but once a partial frame
+			// has arrived we must retain it and wait for the remainder.
+			if (offset == 0)
+				return false;
+			continue;
 		}
 		const auto count = socket.read(bytes + offset, size - offset, false);
 		if (count <= 0)
@@ -129,16 +153,24 @@ bool TcpCANPlugin::read_exact(void *destination, int size)
 
 bool TcpCANPlugin::write_exact(const void *source, int size)
 {
-	std::lock_guard lock(writeMutex);
+	std::lock_guard writeLock(writeMutex);
+	std::lock_guard connectionLock(connectionMutex);
 	if (!valid.load())
 	{
 		return false;
 	}
 
-	if (!socket.write(source, size))
+	const auto *bytes = static_cast<const char *>(source);
+	int offset = 0;
+	while (offset < size)
 	{
-		mark_disconnected();
-		return false;
+		const auto count = socket.write(bytes + offset, size - offset);
+		if (count <= 0)
+		{
+			mark_disconnected_locked();
+			return false;
+		}
+		offset += count;
 	}
 	return true;
 }
@@ -202,6 +234,24 @@ std::uint16_t TcpCANPlugin::get_port() const
 void TcpCANPlugin::reconfigure(std::string newHost, std::uint16_t newPort)
 {
 	close();
-	host = std::move(newHost);
+	host = newHost;
 	port = newPort;
+	configuredHost = std::move(newHost);
+	configuredPort = newPort;
+}
+
+const std::string &TcpCANPlugin::get_configured_host() const
+{
+	return configuredHost;
+}
+std::uint16_t TcpCANPlugin::get_configured_port() const
+{
+	return configuredPort;
+}
+
+void TcpCANPlugin::use_discovered_endpoint(std::string discoveredHost, std::uint16_t discoveredPort)
+{
+	close();
+	host = std::move(discoveredHost);
+	port = discoveredPort;
 }

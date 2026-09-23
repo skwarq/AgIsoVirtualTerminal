@@ -7,15 +7,7 @@ android {
     ndkVersion ndkVersionString
     namespace "com.openagriculture.agisovirtualterminal"
 
-    // Keep native libraries out of APKs for architectures the device does not use.
-    splits {
-        abi {
-            enable true
-            reset()
-            include "arm64-v8a", "armeabi-v7a", "x86", "x86_64"
-            universalApk false
-        }
-    }
+    // Package all supported native ABIs into a single APK.
     externalNativeBuild {
         cmake {
             path "CMakeLists.txt"

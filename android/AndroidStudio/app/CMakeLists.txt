@@ -57,6 +57,7 @@ add_library( ${BINARY_NAME}
     "../../../src/Main.cpp"
     "../../../src/ServerMainComponent.cpp"
     "../../../src/TcpCANPlugin.cpp"
+    "../../../src/TcpGatewayDiscovery.cpp"
     "../../../src/DataMaskComponent.cpp"
     "../../../src/WorkingSetSelectorComponent.cpp"
     "../../../src/DataMaskRenderAreaComponent.cpp"

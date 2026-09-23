@@ -10,6 +10,7 @@
       <FILE id="server" name="ServerMainComponent.cpp" compile="1" resource="0"
             file="../src/ServerMainComponent.cpp"/>
       <FILE id="tcp" name="TcpCANPlugin.cpp" compile="1" resource="0" file="../src/TcpCANPlugin.cpp"/>
+      <FILE id="tcpdiscovery" name="TcpGatewayDiscovery.cpp" compile="1" resource="0" file="../src/TcpGatewayDiscovery.cpp"/>
       <FILE id="datamask" name="DataMaskComponent.cpp" compile="1" resource="0"
             file="../src/DataMaskComponent.cpp"/>
       <FILE id="workingset" name="WorkingSetSelectorComponent.cpp" compile="1"

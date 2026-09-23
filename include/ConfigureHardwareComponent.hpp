@@ -31,6 +31,7 @@ private:
 	TextEditor socketCANNameEditor;
 	TextEditor tcpHostEditor;
 	TextEditor tcpPortEditor;
+	ComboBox tcpConnectionModeSelector;
 	TextEditor touCANSerialEditor;
 	std::vector<std::shared_ptr<isobus::CANHardwarePlugin>> &parentCANDrivers;
 	ConfigureHardwareWindow &parentWindow;
