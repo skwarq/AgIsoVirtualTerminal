@@ -254,7 +254,7 @@ private:
 	void remove_working_set(std::shared_ptr<isobus::VirtualTerminalServerManagedWorkingSet> workingSetToRemove);
 	void clear_iso_data();
 
-	static constexpr int CAN_STATUS_INDICATOR_WIDTH = 150;
+	static constexpr int CAN_STATUS_INDICATOR_WIDTH = 220;
 	juce::Rectangle<int> canStatusArea() const;
 	juce::String canStatusText() const;
 	const std::string ISO_DATA_PATH = "iso_data";

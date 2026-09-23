@@ -119,13 +119,7 @@ ServerMainComponent::ServerMainComponent(
 	setSize(juce::roundToInt(WorkingSetSelectorComponent::WIDTH * working_set_selector_scale()) + juce::roundToInt((get_data_mask_area_size_x_pixels() + softKeyMaskDimensions.total_width()) * display_scale()),
 	        minimum_height() + LoggerComponent::HEIGHT);
 
-	int contentTop = juce::LookAndFeel::getDefaultLookAndFeel().getDefaultMenuBarHeight();
-#if JUCE_ANDROID
-	const auto *display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay();
-	contentTop += display->userArea.getY() - display->totalArea.getY();
-	if (contentTop == juce::LookAndFeel::getDefaultLookAndFeel().getDefaultMenuBarHeight())
-		contentTop += 32;
-#endif
+	const int contentTop = juce::LookAndFeel::getDefaultLookAndFeel().getDefaultMenuBarHeight();
 	workingSetSelector.setTopLeftPosition(0, contentTop);
 
 	logger.setTopLeftPosition(0, get_data_mask_area_size_y_pixels());
@@ -965,15 +959,7 @@ void ServerMainComponent::resized()
 	// If you add any child components, this is where you should
 	// update their positions.
 	const auto menuBarHeight = juce::LookAndFeel::getDefaultLookAndFeel().getDefaultMenuBarHeight();
-	int topInset = 0;
-#if JUCE_ANDROID
-	const auto *display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay();
-	topInset = display->userArea.getY() - display->totalArea.getY();
-	if (topInset == 0)
-		topInset = 32;
-#endif
-	const auto lMenuBarHeight = menuBarHeight + topInset;
-	auto lBounds = getLocalBounds();
+	const auto lMenuBarHeight = menuBarHeight;
 
 	// The working-set picker and the two ISO areas keep the size they are natively laid out at,
 	// and are magnified with a transform. The pivot is each area's own top left corner so it
@@ -988,13 +974,7 @@ void ServerMainComponent::resized()
 	const int dataMaskLeft = pickerLeft;
 	const int softKeyLeft = dataMaskLeft + juce::roundToInt(dataMaskWidth * scale);
 	const int totalLayoutWidth = softKeyLeft + juce::roundToInt(softKeyWidth * scale);
-	int systemRightInset = 0;
-#if JUCE_ANDROID
-	const auto *displayForLayout = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay();
-	systemRightInset = displayForLayout->totalArea.getRight() - displayForLayout->userArea.getRight();
-#endif
-	const int contentWidth = getWidth() - systemRightInset;
-	const int layoutLeft = juce::jmax(0, (contentWidth - totalLayoutWidth) / 2);
+	const int layoutLeft = juce::jmax(0, (getWidth() - totalLayoutWidth) / 2);
 
 	// The picker's own native height is derived from the scaled height it has to fill, rather
 	// than the other way around, so that it lines up with the mask areas beside it regardless of
@@ -1018,9 +998,23 @@ void ServerMainComponent::resized()
 	                         minimum_height(),
 	                         getWidth(),
 	                         loggerViewport.isVisible() ? LoggerComponent::HEIGHT : 0);
-	menuBar.setBounds(0, topInset, getWidth(), menuBarHeight);
-	menuBar.setBounds(menuBar.getBounds().withTrimmedRight(getWidth() - canStatusArea().getX()));
+	menuBar.setBounds(0, 0, getWidth(), menuBarHeight);
+	menuBar.setBounds(menuBar.getBounds().withTrimmedRight(CAN_STATUS_INDICATOR_WIDTH));
 	logger.setSize(loggerViewport.getWidth(), logger.getHeight());
+
+	// Responsive dialogs are children of this component on Android. Their
+	// previous centre is not updated automatically when the Activity rotates.
+	const auto centreDialog = [this](juce::Component *dialog) {
+		if (dialog != nullptr && dialog->isVisible() && dialog->getParentComponent() == this)
+			dialog->setCentrePosition(getLocalBounds().getCentre());
+	};
+	centreDialog(aboutDialog.get());
+	centreDialog(ackSettingsDialog.get());
+	centreDialog(languageDialog.get());
+	centreDialog(versionDialog.get());
+	centreDialog(capabilitiesDialog.get());
+	centreDialog(loggingDialog.get());
+	centreDialog(configureHardwareWindow.get());
 
 	if (logger.getHeight() < loggerViewport.getHeight())
 	{
@@ -1037,16 +1031,10 @@ juce::String ServerMainComponent::canStatusText() const
 
 juce::Rectangle<int> ServerMainComponent::canStatusArea() const
 {
-	const auto *display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay();
-	const auto userArea = display->userArea;
-	const int rightInset = display->totalArea.getRight() - userArea.getRight();
-	const int topInset = juce::jmax(0, userArea.getY() - display->totalArea.getY());
-	juce::GlyphArrangement glyphs;
-	glyphs.addLineOfText(juce::Font(juce::FontOptions{}.withHeight(14.0f)), canStatusText(), 0.0f, 0.0f);
-	const int textWidth = juce::roundToInt(glyphs.getBoundingBox(0, glyphs.getNumGlyphs(), true).getWidth());
-	const int height = juce::LookAndFeel::getDefaultLookAndFeel().getDefaultMenuBarHeight();
-	const int width = juce::jmax(CAN_STATUS_INDICATOR_WIDTH, textWidth + height + 16);
-	return { juce::jmax(0, getWidth() - rightInset - width), topInset, width, height };
+	return { getWidth() - CAN_STATUS_INDICATOR_WIDTH,
+	         0,
+	         CAN_STATUS_INDICATOR_WIDTH,
+         juce::LookAndFeel::getDefaultLookAndFeel().getDefaultMenuBarHeight() };
 }
 
 ApplicationCommandTarget *ServerMainComponent::getNextCommandTarget()
@@ -2718,22 +2706,8 @@ double ServerMainComponent::display_scale() const
 		return 1.0; // Before the component has been given a size there is nothing to fit to
 	}
 
-	int systemRightInset = 0;
-#if JUCE_ANDROID
-	const auto *displayForScale = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay();
-	systemRightInset = displayForScale->totalArea.getRight() - displayForScale->userArea.getRight();
-#endif
-	const int availableWidth = getWidth() - systemRightInset - WorkingSetSelectorComponent::WIDTH;
-	int topInset = 0;
-	int bottomInset = 0;
-#if JUCE_ANDROID
-	const auto *displayForHeight = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay();
-	topInset = displayForHeight->userArea.getY() - displayForHeight->totalArea.getY();
-	bottomInset = displayForHeight->totalArea.getBottom() - displayForHeight->userArea.getBottom();
-	if (topInset == 0)
-		topInset = 32;
-#endif
-	const int availableHeight = getHeight() - topInset - bottomInset -
+	const int availableWidth = getWidth() - WorkingSetSelectorComponent::WIDTH;
+	const int availableHeight = getHeight() -
 	  juce::LookAndFeel::getDefaultLookAndFeel().getDefaultMenuBarHeight() -
 	  (loggerViewport.isVisible() ? LoggerComponent::HEIGHT : 0);
 

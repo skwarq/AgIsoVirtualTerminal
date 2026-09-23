@@ -156,6 +156,31 @@ void ResponsiveDialogWindow::addCustomComponent(juce::Component* component, int 
     fields.push_back({ "custom", {}, component, nullptr, preferredHeight, spacingAfter });
 }
 
+void ResponsiveDialogWindow::updateCustomComponentHeight(juce::Component* component, int preferredHeight)
+{
+    for (auto& field : fields)
+    {
+        if (field.component != component || field.labelComponent != nullptr)
+            continue;
+
+        field.preferredHeight = juce::jmax(1, preferredHeight);
+        if (!isVisible())
+            return;
+
+        const auto display = availableArea();
+        const auto oldBounds = getBounds();
+        resized();
+
+        const int desiredHeight = contentHeight + 40
+            + (buttons.empty() ? buttonToDialogBottomGap
+                               : contentToButtonGap + dialogButtonHeight + buttonToDialogBottomGap);
+        const int fittedHeight = juce::jmin(desiredHeight, display.getHeight());
+        setBounds(oldBounds.withSizeKeepingCentre(getWidth(), fittedHeight));
+        resized();
+        return;
+    }
+}
+
 void ResponsiveDialogWindow::setInfoIconVisible(bool visible)
 {
     infoIconVisible = visible;
@@ -193,14 +218,6 @@ juce::ComboBox* ResponsiveDialogWindow::getComboBoxComponent(const juce::String&
 void ResponsiveDialogWindow::showModal(juce::Component& parent, std::function<void(int)> resultCallback)
 {
     callback = std::move(resultCallback);
-#if JUCE_ANDROID
-    // Keep the dialog in the host Activity. A desktop peer becomes a separate
-    // Android Activity and closing it can background the host application.
-    parent.addAndMakeVisible(*this);
-#else
-    addToDesktop(juce::ComponentPeer::windowIsTemporary);
-#endif
-    setVisible(true);
     // Keep dialogs comfortably readable even when their content is short;
     // the measured content still determines the final size above this minimum.
     int desiredWidth = 320;
@@ -230,10 +247,15 @@ void ResponsiveDialogWindow::showModal(juce::Component& parent, std::function<vo
     const int fittedHeight = juce::jmin(desiredHeight, display.getHeight());
     setSize(fittedWidth, fittedHeight);
 #if JUCE_ANDROID
+    // Add the dialog only after its final size has been calculated. Showing a
+    // full-height child first causes a visible resize flash on Android.
+    parent.addAndMakeVisible(*this);
     setCentrePosition(parent.getLocalBounds().getCentre());
 #else
-    setCentrePosition(display.getCentreX(), display.getCentreY());
+    addToDesktop(juce::ComponentPeer::windowIsTemporary);
+    setCentrePosition(parent.getScreenBounds().getCentre());
 #endif
+    setVisible(true);
     enterModalState(true);
 }
 

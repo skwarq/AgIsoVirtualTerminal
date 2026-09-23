@@ -87,8 +87,10 @@ AgISOVirtualTerminalApplication::MainWindow::MainWindow(juce::String name,
 	setUsingNativeTitleBar(true);
 	setContentOwned(new ServerMainComponent(serverInternalControlFunction, canDrivers, settings.settingsValueTree(), canLogPath, vtNumber, screenCaptureDir), true);
 
-#if JUCE_IOS || JUCE_ANDROID
+#if JUCE_IOS
 	setFullScreen(true);
+#elif JUCE_ANDROID
+	setResizable(false, false);
 #else
 	setResizable(true, true);
 	centreWithSize(getWidth(), getHeight());
@@ -104,6 +106,12 @@ AgISOVirtualTerminalApplication::MainWindow::MainWindow(juce::String name,
 	}
 #endif
 	setVisible(true);
+#if JUCE_ANDROID
+	// Re-apply after the Activity view is attached; Android may otherwise keep
+	// the navigation/status insets from the initial window creation.
+	if (auto *peer = getPeer())
+		peer->setFullScreen(true);
+#endif
 }
 
 void AgISOVirtualTerminalApplication::MainWindow::closeButtonPressed()
