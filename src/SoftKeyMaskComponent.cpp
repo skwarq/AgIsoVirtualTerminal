@@ -20,37 +20,27 @@ SoftKeyMaskComponent::SoftKeyMaskComponent(std::shared_ptr<isobus::VirtualTermin
 
 void SoftKeyMaskComponent::on_content_changed(bool initial)
 {
-	int row = 0;
-	int x = dimensionInfo.PADDING + (dimensionInfo.columnCount - 1) * (dimensionInfo.PADDING + dimensionInfo.keyWidth);
-	int y = dimensionInfo.PADDING;
-
 	for (std::uint16_t i = 0; i < this->get_number_children(); i++)
 	{
 		auto child = get_object_by_id(get_child_id(i), parentWorkingSet->get_object_tree());
 
 		if (nullptr != child)
 		{
-			childComponents.push_back(JuceManagedWorkingSetCache::create_component(parentWorkingSet, child));
-
-			if (isobus::VirtualTerminalObjectType::ObjectPointer == child->get_object_type())
+			auto component = JuceManagedWorkingSetCache::create_component(parentWorkingSet, child);
+			if (nullptr == component)
 			{
-				childComponents.back()->setSize(dimensionInfo.keyWidth, dimensionInfo.keyHeight);
+				continue;
 			}
 
-			if (nullptr != childComponents.back())
+			const auto slotBounds = dimensionInfo.slot_bounds(i, getWidth(), getHeight());
+			if (slotBounds.isEmpty())
 			{
-				addAndMakeVisible(*childComponents.back());
-				childComponents.back()->setTopLeftPosition(x, y);
-				y += (dimensionInfo.PADDING + dimensionInfo.keyHeight);
-
-				row++;
-				if (row >= dimensionInfo.rowCount)
-				{
-					row = 0;
-					x -= (dimensionInfo.PADDING + dimensionInfo.keyWidth);
-					y = dimensionInfo.PADDING;
-				}
+				continue;
 			}
+
+			component->setBounds(slotBounds);
+			addAndMakeVisible(*component);
+			childComponents.push_back(std::move(component));
 		}
 	}
 
@@ -74,10 +64,22 @@ int SoftKeyMaskDimensions::key_count() const
 
 int SoftKeyMaskDimensions::total_width() const
 {
-	return PADDING + (columnCount * (keyWidth + PADDING));
+	return juce::jmax(0, columnCount) * juce::jmax(0, keyWidth) +
+	       juce::jmax(0, columnCount - 1) * key_spacing();
 }
 
 int SoftKeyMaskDimensions::total_height() const
 {
-	return PADDING + (rowCount * (keyHeight + PADDING));
+	return height;
+}
+
+int SoftKeyMaskDimensions::key_spacing() const
+{
+	return soft_key_mask_layout::inter_key_spacing(height, rowCount, keyHeight);
+}
+
+juce::Rectangle<int> SoftKeyMaskDimensions::slot_bounds(int slotIndex, int availableWidth, int availableHeight) const
+{
+	const auto bounds = soft_key_mask_layout::slot_bounds(slotIndex, columnCount, rowCount, keyWidth, keyHeight, availableWidth, availableHeight);
+	return { bounds.x, bounds.y, bounds.width, bounds.height };
 }

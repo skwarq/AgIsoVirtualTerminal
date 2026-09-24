@@ -232,6 +232,11 @@ std::uint8_t ServerMainComponent::get_physical_soft_key_columns() const
 	return softKeyMaskDimensions.columnCount < 1 ? 1 : softKeyMaskDimensions.columnCount;
 }
 
+const SoftKeyMaskDimensions &ServerMainComponent::get_soft_key_mask_dimensions() const
+{
+	return softKeyMaskDimensions;
+}
+
 std::uint8_t ServerMainComponent::get_physical_soft_key_rows() const
 {
 	return softKeyMaskDimensions.rowCount < 1 ? 1 : softKeyMaskDimensions.rowCount;
@@ -1265,7 +1270,22 @@ bool ServerMainComponent::perform(const InvocationInfo &info)
 		{
 			versionDialog = std::make_unique<ResponsiveDialogWindow>("Configure Reported VT Server Version", "You can use this setting to change the version of the ISO11783-6 standard that this server will claim to support in its status messages.");
 			versionDialog->addComboBox("Version", { "Version 2 or Older", "Version 3", "Version 4", "Version 5", "Version 6" });
-			versionDialog->addButton("OK", 2);
+			versionDialog->addButton("OK", 2, [this]
+			{
+				const auto selectedVersion = get_version_from_setting(versionDialog->getComboBoxComponent("Version")->getSelectedItemIndex() + 2);
+				const int requiredRows = selectedVersion >= isobus::VirtualTerminalBase::VTVersion::Version4
+				                           ? soft_key_mask_layout::rows_for_minimum_slots(softKeyMaskDimensions.columnCount, softKeyMaskDimensions.rowCount, 6)
+				                           : softKeyMaskDimensions.rowCount;
+				if (!soft_key_mask_layout::fits_height(softKeyMaskDimensions.height, requiredRows, softKeyMaskDimensions.keyHeight))
+				{
+					juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon,
+					  "Insufficient Data Mask height",
+					  "Configure a taller Data Mask or smaller soft keys before selecting VT Version 4 or later.",
+					  "OK", this);
+					return false;
+				}
+				return true;
+			});
 			versionDialog->addButton("Cancel", 0);
 			versionDialog->getComboBoxComponent("Version")->setSelectedItemIndex(static_cast<int>(versionToReport));
 			versionDialog->showModal(*this, [this](int result) {
@@ -1308,15 +1328,19 @@ bool ServerMainComponent::perform(const InvocationInfo &info)
 				const int rows = readValue("Number of Physical Soft Key rows");
 				const int keyWidth = readValue("Soft Key Designator Width");
 				const int keyHeight = readValue("Soft Key Designator Height");
+				const int effectiveRows = versionToReport >= isobus::VirtualTerminalBase::VTVersion::Version4
+				                            ? soft_key_mask_layout::rows_for_minimum_slots(columns, rows, 6)
+				                            : rows;
 				const bool valid = dataMaskSize >= 1 && dataMaskSize <= 9999 &&
 				  columns >= 1 && columns <= 9 && rows >= 1 && rows <= 99 &&
 				  columns * rows <= 255 && keyWidth >= 60 && keyWidth <= 255 &&
-				  keyHeight >= 60 && keyHeight <= 255;
+				  keyHeight >= 60 && keyHeight <= 255 &&
+				  soft_key_mask_layout::fits_height(dataMaskSize, effectiveRows, keyHeight);
 				if (!valid)
 				{
 					juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon,
 					  "Invalid configuration",
-					  "Use a data mask size from 1 to 9999, 1-9 columns, 1-99 rows (up to 255 keys), and key dimensions from 60 to 255 pixels.",
+					  "Use a data mask size from 1 to 9999, 1-9 columns, 1-99 rows (up to 255 keys), key dimensions from 60 to 255 px, and enough height for every physical key row.",
 					  "OK", this);
 					return false;
 				}
@@ -1796,6 +1820,15 @@ void ServerMainComponent::LanguageCommandConfigClosed::operator()(int result) co
 		{
 			auto version = mParent.versionDialog->getComboBoxComponent("Version")->getSelectedItemIndex() + 2;
 			mParent.versionToReport = get_version_from_setting(version);
+			if (mParent.versionToReport >= isobus::VirtualTerminalBase::VTVersion::Version4)
+			{
+				auto &dimensions = mParent.softKeyMaskDimensions;
+				dimensions.rowCount = soft_key_mask_layout::rows_for_minimum_slots(dimensions.columnCount, dimensions.rowCount, 6);
+				JuceManagedWorkingSetCache::set_softkey_mask_dimension_info(dimensions);
+				mParent.softKeyMaskRenderer.setSize(dimensions.total_width(), dimensions.height);
+				mParent.apply_display_size();
+				mParent.repaint_data_and_soft_key_mask();
+			}
 
 			mParent.save_settings();
 		}
@@ -1804,15 +1837,16 @@ void ServerMainComponent::LanguageCommandConfigClosed::operator()(int result) co
 		case 3: // Save Reported Hardware
 		{
 			auto dataMaskSize = mParent.capabilitiesDialog->getTextEditorContents("Data Mask Size (height and width)");
+			mParent.softKeyMaskDimensions.height = dataMaskSize.getIntValue();
 			mParent.dataMaskRenderer.setSize(dataMaskSize.getIntValue(), dataMaskSize.getIntValue());
 			mParent.softKeyMaskRenderer.setTopLeftPosition(100 + dataMaskSize.getIntValue(), 4 + juce::LookAndFeel::getDefaultLookAndFeel().getDefaultMenuBarHeight());
 
 			mParent.softKeyMaskDimensions.columnCount = mParent.capabilitiesDialog->getTextEditorContents("Number of Physical Soft Key columns").getIntValue();
 			mParent.softKeyMaskDimensions.rowCount = mParent.capabilitiesDialog->getTextEditorContents("Number of Physical Soft Key rows").getIntValue();
-			if (mParent.versionToReport >= isobus::VirtualTerminalBase::VTVersion::Version4 &&
-			    mParent.softKeyMaskDimensions.key_count() < 6)
+			if (mParent.versionToReport >= isobus::VirtualTerminalBase::VTVersion::Version4)
 			{
-				mParent.softKeyMaskDimensions.rowCount = (6 + mParent.softKeyMaskDimensions.columnCount - 1) / mParent.softKeyMaskDimensions.columnCount;
+				mParent.softKeyMaskDimensions.rowCount = soft_key_mask_layout::rows_for_minimum_slots(
+				  mParent.softKeyMaskDimensions.columnCount, mParent.softKeyMaskDimensions.rowCount, 6);
 			}
 
 			mParent.softKeyMaskDimensions.keyWidth = mParent.capabilitiesDialog->getTextEditorContents("Soft Key Designator Width").getIntValue();
@@ -2394,7 +2428,8 @@ void ServerMainComponent::check_load_settings(std::shared_ptr<ValueTree> setting
 			}
 			if (!child.getProperty("DataMaskRenderAreaSize").isVoid())
 			{
-				dataMaskRenderer.setSize(static_cast<std::uint16_t>(static_cast<int>(child.getProperty("DataMaskRenderAreaSize"))), static_cast<std::uint16_t>(static_cast<int>(child.getProperty("DataMaskRenderAreaSize"))));
+				softKeyMaskDimensions.height = static_cast<int>(child.getProperty("DataMaskRenderAreaSize"));
+				dataMaskRenderer.setSize(static_cast<std::uint16_t>(softKeyMaskDimensions.height), static_cast<std::uint16_t>(softKeyMaskDimensions.height));
 				softKeyMaskRenderer.setSize(softKeyMaskDimensions.total_width(),
 				                            static_cast<int>(child.getProperty("DataMaskRenderAreaSize")));
 			}

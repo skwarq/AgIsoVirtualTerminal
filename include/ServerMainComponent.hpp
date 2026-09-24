@@ -47,6 +47,7 @@ public:
 	std::uint8_t get_number_of_physical_soft_keys() const override;
 	std::uint8_t get_physical_soft_key_rows() const;
 	std::uint8_t get_physical_soft_key_columns() const;
+	const SoftKeyMaskDimensions &get_soft_key_mask_dimensions() const;
 	std::uint16_t get_data_mask_area_size_x_pixels() const override;
 	std::uint16_t get_data_mask_area_size_y_pixels() const override;
 	void suspend_working_set(std::shared_ptr<isobus::VirtualTerminalServerManagedWorkingSet> workingSetWithError) override;

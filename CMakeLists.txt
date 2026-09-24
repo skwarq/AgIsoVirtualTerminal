@@ -8,6 +8,9 @@ project(
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
 
 set(JUCE_WEB_BROWSER OFF)
+include(CTest)
+option(AGISO_BUILD_TESTING "Build AgIsoVirtualTerminal unit tests" OFF)
+# Keep fetched dependencies from enabling their unrelated test suites.
 set(BUILD_TESTING OFF)
 
 if(WIN32)
@@ -60,6 +63,16 @@ target_compile_definitions(AgISOVirtualTerminal PRIVATE JUCE_USE_CURL=0
                                                         JUCE_WEB_BROWSER=0)
 
 juce_generate_juce_header(AgISOVirtualTerminal)
+
+if(AGISO_BUILD_TESTING)
+  find_package(GTest REQUIRED)
+  add_executable(SoftKeyMaskLayoutTests tests/SoftKeyMaskLayoutTests.cpp)
+  target_include_directories(SoftKeyMaskLayoutTests PRIVATE ${CMAKE_CURRENT_LIST_DIR}/include)
+  target_compile_features(SoftKeyMaskLayoutTests PRIVATE cxx_std_17)
+  target_link_libraries(SoftKeyMaskLayoutTests PRIVATE GTest::gtest_main)
+  include(GoogleTest)
+  gtest_discover_tests(SoftKeyMaskLayoutTests)
+endif()
 
 target_sources(
   AgISOVirtualTerminal

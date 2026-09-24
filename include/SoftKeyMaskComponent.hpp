@@ -13,6 +13,7 @@
 #include "isobus/isobus/isobus_virtual_terminal_server_managed_working_set.hpp"
 
 #include "JuceHeader.h"
+#include "SoftKeyMaskLayout.hpp"
 
 class SoftKeyMaskDimensions
 {
@@ -21,15 +22,22 @@ public:
 
 	/**
 	 * @brief total_width
-	 * @return The total width of the softkeymask (including inner and outer column paddings)
+	 * @return Width needed for the configured columns and their inter-key spacing
 	 */
 	int total_width() const;
 
 	/**
    * @brief total_height
-   * @return The total height of the softkeymask (including inner and outer column paddings)
+   * @return Available height of the softkey mask
    */
 	int total_height() const;
+
+	/**
+	 * @brief Returns the bounds for a physical soft-key slot.
+	 * Inter-key spacing is shared by both axes; there are no outer margins.
+	 */
+	juce::Rectangle<int> slot_bounds(int slotIndex, int availableWidth, int availableHeight) const;
+	int key_spacing() const;
 
 	/**
 	 * @brief key_count
@@ -42,7 +50,6 @@ public:
 	int rowCount = 6;
 	int columnCount = 1;
 	int height = 480;
-	static constexpr std::uint8_t PADDING = 10;
 };
 
 class SoftKeyMaskComponent : public isobus::SoftKeyMask
