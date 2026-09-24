@@ -36,6 +36,7 @@ NumericKeypadComponent::NumericKeypadComponent(double initialValue,
 		[this]() { backspace(); },
 		[this]() { clear(); },
 		[this]() {
+		  hasTypedSinceOpening = true;
 		  entry = entry.startsWith("-") ? entry.substring(1) : ("-" + entry);
 		  refresh_display();
 		}
@@ -130,6 +131,7 @@ void NumericKeypadComponent::append(juce::juce_wchar character)
 
 void NumericKeypadComponent::backspace()
 {
+	hasTypedSinceOpening = true;
 	if (entry.isNotEmpty())
 	{
 		entry = entry.dropLastCharacters(1);
@@ -139,6 +141,7 @@ void NumericKeypadComponent::backspace()
 
 void NumericKeypadComponent::clear()
 {
+	hasTypedSinceOpening = true;
 	entry.clear();
 	refresh_display();
 }
@@ -147,27 +150,52 @@ void NumericKeypadComponent::refresh_display()
 {
 	entryLabel.setText(entry.isEmpty() ? "0" : entry, dontSendNotification);
 
-	// Out of range entries are still accepted and clamped when the dialog is confirmed, but the
-	// operator gets told before that happens
+	const bool valid = is_within_range();
+	if (!hasTypedSinceOpening && !valid)
+	{
+		rangeLabel.setText("Current value is outside range", dontSendNotification);
+	}
+	else if (hasTypedSinceOpening && !valid)
+	{
+		const bool complete = entry.isNotEmpty() && (entry != "-") && (entry != ".") && (entry != "-.");
+		rangeLabel.setText(complete
+		                     ? "Enter " + String(minimum, static_cast<int>(decimals)) + " to " + String(maximum, static_cast<int>(decimals))
+		                     : "Enter a valid number",
+		                   dontSendNotification);
+	}
+	else
+	{
+		rangeLabel.setText("Range " + String(minimum, static_cast<int>(decimals)) +
+		                     " to " + String(maximum, static_cast<int>(decimals)),
+		                   dontSendNotification);
+	}
+
 	entryLabel.setColour(Label::textColourId,
-	                     is_within_range() ? getLookAndFeel().findColour(Label::textColourId) : Colours::red);
+	                     valid ? getLookAndFeel().findColour(Label::textColourId) : Colours::red);
 	rangeLabel.setColour(Label::textColourId,
-	                     getLookAndFeel().findColour(Label::textColourId).withAlpha(is_within_range() ? 0.6f : 1.0f));
+	                     valid ? getLookAndFeel().findColour(Label::textColourId).withAlpha(0.6f) : Colours::red);
 	rangeLabel.repaint();
 }
 
 double NumericKeypadComponent::get_value() const
 {
-	const double typed = entry.isEmpty() ? 0.0 : entry.getDoubleValue();
-
-	return std::min(std::max(typed, minimum), maximum);
+	return entry.isEmpty() ? 0.0 : entry.getDoubleValue();
 }
 
 bool NumericKeypadComponent::is_within_range() const
 {
-	const double typed = entry.isEmpty() ? 0.0 : entry.getDoubleValue();
+	if (entry.isEmpty() || (entry == "-") || (entry == ".") || (entry == "-."))
+	{
+		return false;
+	}
+	const double typed = entry.getDoubleValue();
 
-	return (typed >= minimum) && (typed <= maximum);
+	return std::isfinite(typed) && (typed >= minimum) && (typed <= maximum);
+}
+
+bool NumericKeypadComponent::can_confirm() const
+{
+	return !hasTypedSinceOpening || is_within_range();
 }
 
 void NumericKeypadComponent::paint(Graphics &graphics)

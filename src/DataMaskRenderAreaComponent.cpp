@@ -364,24 +364,47 @@ void DataMaskRenderAreaComponent::mouseUp(const MouseEvent &event)
 							// anything cannot write a stale value from a previous edit
 							inputNumberListener.set_last_value(currentRawValue);
 							inputNumberModal->addCustomComponent(inputNumberKeypad.get(), inputNumberKeypad->getHeight());
-							inputNumberModal->addButton("OK", 0);
+							auto canConfirmInputNumber = [this, clickedNumber, offset, scale]() {
+								if ((nullptr == inputNumberKeypad) || !inputNumberKeypad->can_confirm())
+								{
+									return false;
+								}
+								if (!inputNumberKeypad->has_user_edited())
+								{
+									return true;
+								}
+								if (!std::isfinite(scale) || (0.0f == scale))
+								{
+									return false;
+								}
+								const double rawValue = vt_numeric::to_raw_value(inputNumberKeypad->get_value(), offset, scale);
+								if (!std::isfinite(rawValue))
+								{
+									return false;
+								}
+								const double roundedRawValue = std::round(rawValue);
+								return (roundedRawValue >= static_cast<double>(clickedNumber->get_minimum_value())) &&
+								       (roundedRawValue <= static_cast<double>(clickedNumber->get_maximum_value()));
+							};
+							inputNumberModal->addButton("OK", 0, canConfirmInputNumber);
 							inputNumberModal->addButton("Cancel", 1); // TODO catch ESC as cancel
 							auto resultCallback = [this, clickedNumber, offset, scale](int result) {
 
 								std::uint16_t varNumID = 0xFFFF;
+								bool valueChanged = false;
 								if (0 == result)
 								{
 									// Back from what the operator sees to what the object stores.
-									// Rounded rather than truncated, and clamped, so the value can
-									// never land outside what the object said it accepts.
-									if ((nullptr != inputNumberKeypad) && (0.0f != scale))
+									// Round the validated value back into the raw protocol domain.
+									if ((nullptr != inputNumberKeypad) && inputNumberKeypad->has_user_edited() && std::isfinite(scale) && (0.0f != scale))
 									{
 										const double rawValue = vt_numeric::to_raw_value(inputNumberKeypad->get_value(), offset, scale);
-										const double clamped = std::min(std::max(rawValue, static_cast<double>(clickedNumber->get_minimum_value())),
-										                                static_cast<double>(clickedNumber->get_maximum_value()));
-										if (std::isfinite(clamped))
+										const double roundedRawValue = std::round(rawValue);
+										if (std::isfinite(roundedRawValue) &&
+											(roundedRawValue >= static_cast<double>(clickedNumber->get_minimum_value())) &&
+											(roundedRawValue <= static_cast<double>(clickedNumber->get_maximum_value())))
 										{
-											inputNumberListener.set_last_value(static_cast<std::uint32_t>(std::llround(clamped)));
+											inputNumberListener.set_last_value(static_cast<std::uint32_t>(roundedRawValue));
 										}
 									}
 
@@ -402,6 +425,7 @@ void DataMaskRenderAreaComponent::mouseUp(const MouseEvent &event)
 										if (std::static_pointer_cast<isobus::NumberVariable>(clickedNumber->get_object_by_id(clickedNumber->get_variable_reference(), parentWorkingSet->get_object_tree()))->get_value() != inputNumberListener.get_last_value())
 										{
 											ownerServer.process_macro(clickedNumber, isobus::EventID::OnEntryOfANewValue, isobus::VirtualTerminalObjectType::InputNumber, parentWorkingSet);
+											valueChanged = true;
 										}
 										std::static_pointer_cast<isobus::NumberVariable>(clickedNumber->get_object_by_id(clickedNumber->get_variable_reference(), parentWorkingSet->get_object_tree()))->set_value(inputNumberListener.get_last_value());
 									}
@@ -411,7 +435,7 @@ void DataMaskRenderAreaComponent::mouseUp(const MouseEvent &event)
 										{
 											ownerServer.process_macro(clickedNumber, isobus::EventID::OnEntryOfANewValue, isobus::VirtualTerminalObjectType::InputNumber, parentWorkingSet);
 											clickedNumber->set_value(inputNumberListener.get_last_value());
-											ownerServer.process_macro(clickedNumber, isobus::EventID::OnChangeValue, isobus::VirtualTerminalObjectType::InputNumber, parentWorkingSet);
+											valueChanged = true;
 										}
 									}
 
@@ -422,7 +446,7 @@ void DataMaskRenderAreaComponent::mouseUp(const MouseEvent &event)
 								inputNumberKeypad.reset();
 								ownerServer.send_select_input_object_message(clickedNumber->get_id(), false, false, ownerServer.get_client_control_function_for_working_set(parentWorkingSet));
 
-								if (0 == result)
+								if ((0 == result) && valueChanged)
 								{
 									if (0xFFFF != varNumID)
 									{

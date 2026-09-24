@@ -32,14 +32,20 @@ public:
 	                       double maximumValue,
 	                       std::uint8_t numberOfDecimals);
 
-	/// @brief Returns what has been typed, clamped into the object's range
+	/// @brief Returns the entered value in displayed units, without clamping
 	/// @returns The entered value in displayed units
 	double get_value() const;
 
-	/// @brief Checks if what has been typed is inside the object's range. Out of range entries are
-	/// still accepted and clamped, but the display shows them in red beforehand.
-	/// @returns True if the typed value needs no clamping
+	/// @brief Checks whether the current entry is a complete finite number inside the range.
+	/// @returns True if the current entry is valid
 	bool is_within_range() const;
+
+	/// @brief Checks whether the dialog may be confirmed. An untouched ECU value is preserved even
+	/// when it is already outside the Input Number's entry range.
+	bool can_confirm() const;
+
+	/// @brief Returns whether the operator changed the initially displayed value.
+	bool has_user_edited() const noexcept { return hasTypedSinceOpening; }
 
 	void paint(Graphics &graphics) override;
 
