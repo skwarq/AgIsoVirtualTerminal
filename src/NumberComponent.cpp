@@ -5,8 +5,11 @@
 *******************************************************************************/
 #include "NumberComponent.hpp"
 
+#include <cmath>
 #include <iomanip>
 #include <sstream>
+
+#include "NumericValueUtils.hpp"
 
 NumberComponent::NumberComponent(
   std::shared_ptr<isobus::VirtualTerminalServerManagedWorkingSet> workingSet) :
@@ -46,7 +49,7 @@ void NumberComponent::paintNumber(Graphics &g, bool enabled)
 		}
 	}
 
-	float scaledValue = (sourceNumber->get_value() + sourceNumber->get_offset()) * sourceNumber->get_scale();
+	double scaledValue = vt_numeric::to_display_value(sourceNumber->get_value(), sourceNumber->get_offset(), sourceNumber->get_scale());
 	if (isobus::NULL_OBJECT_ID != sourceNumber->get_variable_reference())
 	{
 		auto child = sourceNumber->get_object_by_id(sourceNumber->get_variable_reference(), parentWorkingSet->get_object_tree());
@@ -54,7 +57,7 @@ void NumberComponent::paintNumber(Graphics &g, bool enabled)
 		if ((nullptr != child) &&
 		    (isobus::VirtualTerminalObjectType::NumberVariable == child->get_object_type()))
 		{
-			scaledValue = (std::static_pointer_cast<isobus::NumberVariable>(child)->get_value() + sourceNumber->get_offset()) * sourceNumber->get_scale();
+			scaledValue = vt_numeric::to_display_value(std::static_pointer_cast<isobus::NumberVariable>(child)->get_value(), sourceNumber->get_offset(), sourceNumber->get_scale());
 		}
 	}
 
@@ -73,12 +76,49 @@ void NumberComponent::paintNumber(Graphics &g, bool enabled)
 	g.setColour(drawColour);
 
 	std::ostringstream valueText;
-	valueText << std::fixed << std::setprecision(sourceNumber->get_number_of_decimals()) << scaledValue;
-	g.drawText(valueText.str(), 0, 0, sourceNumber->get_width(), sourceNumber->get_height(), convert_justification(sourceNumber->get_horizontal_justification(), sourceNumber->get_vertical_justification()), false);
+	const auto decimals = sourceNumber->get_number_of_decimals();
+	const bool exponentialFormat = sourceNumber->get_format();
+	double formattedValue = scaledValue;
+	if (sourceNumber->get_option(isobus::NumberVTObject::Options::Truncate))
+	{
+		if (exponentialFormat && std::isfinite(formattedValue) && (0.0 != formattedValue))
+		{
+			const auto exponent = std::floor(std::log10(std::abs(formattedValue)));
+			const auto significantDigitsFactor = std::pow(10.0, static_cast<int>(decimals) - exponent);
+			formattedValue = std::trunc(formattedValue * significantDigitsFactor) / significantDigitsFactor;
+		}
+		else
+		{
+			const auto decimalFactor = std::pow(10.0, static_cast<int>(decimals));
+			formattedValue = std::trunc(formattedValue * decimalFactor) / decimalFactor;
+		}
+	}
+	valueText << (exponentialFormat ? std::uppercase : std::nouppercase)
+	          << (exponentialFormat ? std::scientific : std::fixed)
+	          << std::setprecision(decimals)
+	          << formattedValue;
+
+	auto renderedText = valueText.str();
+	if (sourceNumber->get_option(isobus::NumberVTObject::Options::DisplayLeadingZeros))
+	{
+		const auto font = g.getCurrentFont();
+		const auto zeroWidth = GlyphArrangement::getStringWidth(font, "0");
+		auto renderedWidth = GlyphArrangement::getStringWidth(font, renderedText);
+		const auto fieldWidth = static_cast<float>(sourceNumber->get_width());
+
+		while ((zeroWidth > 0.0f) && (renderedWidth + zeroWidth <= fieldWidth))
+		{
+			const auto firstDigit = (!renderedText.empty() && renderedText.front() == '-') ? 1u : 0u;
+			renderedText.insert(firstDigit, 1, '0');
+			renderedWidth += zeroWidth;
+		}
+	}
+
+	g.drawText(renderedText, 0, 0, sourceNumber->get_width(), sourceNumber->get_height(), convert_justification(sourceNumber->get_horizontal_justification(), sourceNumber->get_vertical_justification()), false);
 
 	if (strikeThrough)
 	{
-		drawStrikeThrough(g, sourceNumber->get_width(), sourceNumber->get_height(), valueText.str(), sourceNumber->get_horizontal_justification());
+		drawStrikeThrough(g, sourceNumber->get_width(), sourceNumber->get_height(), renderedText, sourceNumber->get_horizontal_justification());
 	}
 
 	// If disabled, try and show that by drawing some semi-transparent grey
