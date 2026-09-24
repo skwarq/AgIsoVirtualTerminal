@@ -1,5 +1,143 @@
 #include "ResponsiveDialogWindow.hpp"
 
+#include <algorithm>
+#include <atomic>
+#include <vector>
+
+#if JUCE_WINDOWS
+#include <shobjidl.h>
+#endif
+#if JUCE_ANDROID
+#include <jni.h>
+#include <juce_core/native/juce_JNIHelpers_android.h>
+#endif
+
+namespace
+{
+std::vector<juce::Component::SafePointer<ResponsiveDialogWindow>>& activeKeyboardDialogs()
+{
+    static std::vector<juce::Component::SafePointer<ResponsiveDialogWindow>> dialogs;
+    return dialogs;
+}
+
+#if JUCE_WINDOWS
+class WindowsInputPaneHandler final : public IFrameworkInputPaneHandler
+{
+public:
+    explicit WindowsInputPaneHandler(ResponsiveDialogWindow& dialog) : target(&dialog) {}
+
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** object) override
+    {
+        if (object == nullptr)
+            return E_POINTER;
+        *object = nullptr;
+        if (iid == IID_IUnknown || iid == IID_IFrameworkInputPaneHandler)
+        {
+            *object = static_cast<IFrameworkInputPaneHandler*>(this);
+            AddRef();
+            return S_OK;
+        }
+        return E_NOINTERFACE;
+    }
+
+    ULONG STDMETHODCALLTYPE AddRef() override { return ++referenceCount; }
+    ULONG STDMETHODCALLTYPE Release() override
+    {
+        const auto remaining = --referenceCount;
+        if (remaining == 0)
+            delete this;
+        return remaining;
+    }
+
+    HRESULT STDMETHODCALLTYPE Showing(RECT* bounds, BOOL) override
+    {
+        if (bounds != nullptr)
+            send(*bounds);
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE Hiding(BOOL) override
+    {
+        ResponsiveDialogWindow::notifyWindowsKeyboardOcclusion({}, target);
+        return S_OK;
+    }
+
+private:
+    void send(const RECT& bounds)
+    {
+        const juce::Rectangle<int> physical(bounds.left, bounds.top,
+                                            bounds.right - bounds.left, bounds.bottom - bounds.top);
+        ResponsiveDialogWindow::notifyWindowsKeyboardOcclusion(physical, target);
+    }
+
+    juce::Component::SafePointer<ResponsiveDialogWindow> target;
+    std::atomic<ULONG> referenceCount{ 1 };
+};
+#endif
+
+} // namespace
+
+struct PlatformKeyboardSubscription
+{
+#if JUCE_WINDOWS
+    explicit PlatformKeyboardSubscription(ResponsiveDialogWindow& dialog)
+    {
+        const auto initResult = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+        if (FAILED(initResult))
+        {
+            juce::Logger::writeToLog("ResponsiveDialogWindow: COM STA initialization failed; Windows IME tracking is unavailable.");
+            return;
+        }
+        shouldUninitialize = true;
+
+        const auto createResult = CoCreateInstance(CLSID_FrameworkInputPane, nullptr, CLSCTX_INPROC_SERVER,
+                                                   IID_PPV_ARGS(&inputPane));
+        if (FAILED(createResult))
+        {
+            juce::Logger::writeToLog("ResponsiveDialogWindow: FrameworkInputPane creation failed; Windows IME tracking is unavailable.");
+            return;
+        }
+
+        handler = new WindowsInputPaneHandler(dialog);
+        if (auto* peer = dialog.getPeer())
+        {
+            const auto window = static_cast<HWND>(peer->getNativeHandle());
+            if (window != nullptr && SUCCEEDED(inputPane->AdviseWithHWND(window, handler, &cookie)))
+                advised = true;
+        }
+        if (advised)
+        {
+            // Advise reports future changes only. Query once so a dialog opened
+            // while the touch keyboard is visible receives its current state.
+            RECT bounds{};
+            if (SUCCEEDED(inputPane->Location(&bounds))
+                && bounds.right > bounds.left && bounds.bottom > bounds.top)
+                handler->Showing(&bounds, FALSE);
+        }
+        if (!advised)
+            juce::Logger::writeToLog("ResponsiveDialogWindow: FrameworkInputPane subscription failed; Windows IME tracking is unavailable.");
+    }
+
+    ~PlatformKeyboardSubscription()
+    {
+        if (inputPane != nullptr && advised)
+            inputPane->Unadvise(cookie);
+        if (handler != nullptr)
+            handler->Release();
+        if (inputPane != nullptr)
+            inputPane->Release();
+        if (shouldUninitialize)
+            CoUninitialize();
+    }
+
+    IFrameworkInputPane* inputPane = nullptr;
+    WindowsInputPaneHandler* handler = nullptr;
+    DWORD cookie = 0;
+    bool advised = false;
+    bool shouldUninitialize = false;
+#endif
+};
+
 namespace
 {
 int measureTextWidth(const juce::String& text, float height)
@@ -149,11 +287,14 @@ juce::TextButton* ResponsiveDialogWindow::addButton(const juce::String& name, in
     return raw;
 }
 
-void ResponsiveDialogWindow::addCustomComponent(juce::Component* component, int preferredHeight, int spacingAfter, int preferredWidth)
+void ResponsiveDialogWindow::addCustomComponent(juce::Component* component, int preferredHeight, int spacingAfter,
+                                                int preferredWidth, bool fillRemainingViewportHeight,
+                                                int minimumHeight)
 {
     if (component == nullptr) return;
     content.addAndMakeVisible(*component);
-    fields.push_back({ "custom", {}, component, nullptr, preferredHeight, spacingAfter, preferredWidth });
+    fields.push_back({ "custom", {}, component, nullptr, preferredHeight, spacingAfter, preferredWidth,
+                       fillRemainingViewportHeight, juce::jmax(0, minimumHeight) });
 }
 
 void ResponsiveDialogWindow::updateCustomComponentHeight(juce::Component* component, int preferredHeight)
@@ -171,7 +312,7 @@ void ResponsiveDialogWindow::updateCustomComponentHeight(juce::Component* compon
         const auto oldBounds = getBounds();
         resized();
 
-        const int desiredHeight = contentHeight + 40
+        const int desiredHeight = contentHeight + titleAreaHeight()
             + (buttons.empty() ? buttonToDialogBottomGap
                                : contentToButtonGap + dialogButtonHeight + buttonToDialogBottomGap);
         const int fittedHeight = juce::jmin(desiredHeight, display.getHeight());
@@ -187,6 +328,39 @@ void ResponsiveDialogWindow::setInfoIconVisible(bool visible)
     repaint();
 }
 
+void ResponsiveDialogWindow::setTitleVisible(bool visible)
+{
+    if (titleVisible == visible)
+        return;
+
+    titleVisible = visible;
+    if (isVisible())
+    {
+        resized();
+        repaint();
+    }
+}
+
+void ResponsiveDialogWindow::setMessageVisibleAfterKeyboardDismiss(bool enabled)
+{
+    messageVisibleAfterKeyboardDismiss = enabled;
+    if (!enabled || messageLabel == nullptr)
+        return;
+
+    messageVisible = false;
+    messageLabel->setVisible(false);
+    resized();
+	const int desiredHeight = contentHeight + titleAreaHeight()
+	    + (buttons.empty() ? buttonToDialogBottomGap
+	                       : contentToButtonGap + dialogButtonHeight + buttonToDialogBottomGap);
+	const auto area = availableArea();
+	const auto* parent = getParentComponent();
+	const int maxHeight = parent != nullptr ? juce::jmin(area.getHeight(), parent->getHeight()) : area.getHeight();
+	const auto centre = parent != nullptr ? parent->getLocalBounds().getCentre() : getScreenBounds().getCentre();
+	setSize(getWidth(), juce::jmin(desiredHeight, maxHeight));
+	setCentrePosition(centre);
+    repaint();
+}
 void ResponsiveDialogWindow::setVerticalScrollingEnabled(bool enabled)
 {
     verticalScrollingEnabled = enabled;
@@ -243,7 +417,7 @@ void ResponsiveDialogWindow::showModal(juce::Component& parent, std::function<vo
     // actual height, including labels and wrapped description text.
     setSize(fittedWidth, display.getHeight());
     resized();
-    const int desiredHeight = contentHeight + 40
+    const int desiredHeight = contentHeight + titleAreaHeight()
         + (buttons.empty() ? buttonToDialogBottomGap
                            : contentToButtonGap + dialogButtonHeight + buttonToDialogBottomGap);
     const int fittedHeight = juce::jmin(desiredHeight, display.getHeight());
@@ -259,10 +433,45 @@ void ResponsiveDialogWindow::showModal(juce::Component& parent, std::function<vo
 #endif
     setVisible(true);
     enterModalState(true);
+    activeKeyboardDialogs().emplace_back(this);
+#if JUCE_WINDOWS
+    keyboardSubscription = std::make_unique<PlatformKeyboardSubscription>(*this);
+#elif JUCE_ANDROID
+    // Insets may not change when this dialog opens, so explicitly re-publish
+    // the current IME state. This is a one-shot event request, not polling.
+    auto* env = juce::getEnv();
+    auto activity = juce::getCurrentActivity();
+    if (activity == nullptr)
+        activity = juce::getMainActivity();
+    if (env != nullptr && activity != nullptr)
+    {
+        auto activityClass = env->GetObjectClass(activity.get());
+        const auto method = activityClass != nullptr
+            ? env->GetMethodID(activityClass, "requestCurrentImeInsets", "()V")
+            : nullptr;
+        if (method != nullptr)
+            env->CallVoidMethod(activity.get(), method);
+        if (env->ExceptionCheck())
+            env->ExceptionClear();
+        if (activityClass != nullptr)
+            env->DeleteLocalRef(activityClass);
+    }
+#endif
 }
 
 void ResponsiveDialogWindow::close(int result)
 {
+    keyboardSubscription.reset();
+    auto& activeDialogs = activeKeyboardDialogs();
+    activeDialogs.erase(std::remove_if(activeDialogs.begin(), activeDialogs.end(),
+                                      [this](const auto& dialog) { return dialog.getComponent() == this; }),
+                        activeDialogs.end());
+    if (keyboardWasVisible)
+    {
+        setBounds(boundsBeforeKeyboard);
+        viewport.setViewPosition(scrollPositionBeforeKeyboard);
+        keyboardWasVisible = false;
+    }
     exitModalState(result);
 
     // The callback is allowed to destroy this dialog. Invoke it only after
@@ -278,7 +487,8 @@ void ResponsiveDialogWindow::resized()
     // The button row starts 10 px below its top. Keep 16 px between content
     // and the button, so the viewport bottom margin is 6 px.
     constexpr int viewportBottomMargin = 6;
-    viewport.setBounds(dialogHorizontalMargin, dialogTitleHeight, getWidth() - 2 * dialogHorizontalMargin, getHeight() - footer - dialogTitleHeight - dialogContentBottomMargin);
+    viewport.setBounds(dialogHorizontalMargin, titleAreaHeight(), getWidth() - 2 * dialogHorizontalMargin,
+                       getHeight() - footer - titleAreaHeight() - dialogContentBottomMargin);
     buttonBar.setBounds(dialogHorizontalMargin, getHeight() - footer, getWidth() - 2 * dialogHorizontalMargin, footer);
     const int gap = 12;
     const int buttonWidth = juce::jmin(110, (buttonBar.getWidth() - gap * static_cast<int>(buttons.size() - 1)) /
@@ -300,7 +510,8 @@ void ResponsiveDialogWindow::paint(juce::Graphics& g)
     g.drawRect(getLocalBounds().reduced(1), 1.0f);
     g.setColour(juce::Colours::white);
     g.setFont(juce::Font(juce::FontOptions{}.withHeight(16.0f)));
-    g.drawFittedText(title, 16, 8, getWidth() - 32, 24, juce::Justification::centred, 1);
+    if (titleVisible)
+        g.drawFittedText(title, 16, 8, getWidth() - 32, 24, juce::Justification::centred, 1);
 
     if (infoIconVisible)
     {
@@ -316,7 +527,7 @@ void ResponsiveDialogWindow::paint(juce::Graphics& g)
 void ResponsiveDialogWindow::layoutContent()
 {
     int y = 8;
-    if (messageLabel != nullptr)
+    if (messageLabel != nullptr && messageVisible)
     {
         const int messageWidth = juce::jmax(1, viewport.getWidth() - 24);
         const int messageHeight = measureWrappedTextHeight(message, messageWidth, 16.0f) + 8;
@@ -339,8 +550,13 @@ void ResponsiveDialogWindow::layoutContent()
             const int availableWidth = juce::jmax(1, viewport.getWidth() - 24);
             const int componentWidth = field.preferredWidth > 0 ? juce::jmin(availableWidth, field.preferredWidth) : availableWidth;
             const int componentX = (availableWidth - componentWidth) / 2;
-            field.component->setBounds(componentX, y, componentWidth, field.preferredHeight);
-            y += field.preferredHeight + field.spacingAfter;
+            const int componentHeight = field.fillRemainingViewportHeight
+                ? juce::jmax(field.minimumHeight,
+                             juce::jmin(field.preferredHeight,
+                                        juce::jmax(1, viewport.getHeight() - y - field.spacingAfter - 8)))
+                : field.preferredHeight;
+            field.component->setBounds(componentX, y, componentWidth, componentHeight);
+            y += componentHeight + field.spacingAfter;
             continue;
         }
         if (field.labelComponent != nullptr)
@@ -365,5 +581,209 @@ void ResponsiveDialogWindow::layoutContent()
 
 juce::Rectangle<int> ResponsiveDialogWindow::availableArea() const
 {
-    return juce::Desktop::getInstance().getDisplays().getPrimaryDisplay()->userArea.reduced(16);
+    const auto& displays = juce::Desktop::getInstance().getDisplays();
+    const auto* display = displays.getDisplayForRect(getScreenBounds());
+    if (display == nullptr)
+        display = displays.getPrimaryDisplay();
+    if (display == nullptr)
+        return {};
+
+    auto area = display->userArea;
+    if (keyboardWasVisible && !keyboardScreenBounds.isEmpty())
+    {
+        const auto* focused = getFocusedEditor();
+        const auto editorScreen = focused != nullptr ? focused->getScreenBounds() : getScreenBounds();
+        const bool keyboardAtBottom = keyboardScreenBounds.getBottom() >= area.getBottom() - 8;
+        if (keyboardAtBottom || editorScreen.getCentreY() < keyboardScreenBounds.getCentreY())
+            area.setBottom(juce::jmin(area.getBottom(), keyboardScreenBounds.getY()));
+        else
+            area.setTop(juce::jmax(area.getY(), keyboardScreenBounds.getBottom()));
+    }
+    return area.reduced(16);
 }
+
+juce::Component* ResponsiveDialogWindow::getFocusedEditor() const
+{
+    auto* focused = juce::Component::getCurrentlyFocusedComponent();
+    if (focused != nullptr && focused != this && isParentOf(focused))
+        return focused;
+
+    for (const auto& field : fields)
+        if (field.component != nullptr && field.component->hasKeyboardFocus(true))
+            return field.component;
+    return nullptr;
+}
+
+ResponsiveDialogWindow* ResponsiveDialogWindow::getFocusedKeyboardDialog()
+{
+    auto& dialogs = activeKeyboardDialogs();
+    auto* focused = juce::Component::getCurrentlyFocusedComponent();
+    if (focused != nullptr)
+        for (auto iterator = dialogs.rbegin(); iterator != dialogs.rend(); ++iterator)
+            if (auto* dialog = iterator->getComponent(); dialog != nullptr && dialog->isVisible()
+                && dialog->isParentOf(focused))
+                return dialog;
+
+    // A modal can be visible before JUCE transfers keyboard focus to one of
+    // its editors. Route the initial inset snapshot to the topmost dialog
+    // instead of dropping the only event that reports an already-open IME.
+    for (auto iterator = dialogs.rbegin(); iterator != dialogs.rend(); ++iterator)
+        if (auto* dialog = iterator->getComponent(); dialog != nullptr && dialog->isVisible())
+            return dialog;
+    return nullptr;
+}
+
+void ResponsiveDialogWindow::notifyAndroidKeyboardInset(int bottomInsetPixels)
+{
+    juce::MessageManager::callAsync([bottomInsetPixels]
+    {
+        auto* dialog = getFocusedKeyboardDialog();
+        const auto* display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay();
+        if (dialog == nullptr || display == nullptr)
+            return;
+
+        const int inset = juce::roundToInt(static_cast<float>(bottomInsetPixels) / static_cast<float>(display->scale));
+        const auto bounds = inset > 0
+            ? display->totalArea.withTop(display->totalArea.getBottom() - inset).withHeight(inset)
+            : juce::Rectangle<int>{};
+        dialog->handleKeyboardOcclusionChanged(bounds);
+    });
+}
+
+#if JUCE_WINDOWS
+void ResponsiveDialogWindow::notifyWindowsKeyboardOcclusion(
+    juce::Rectangle<int> physicalScreenBounds,
+    juce::Component::SafePointer<ResponsiveDialogWindow> safeTarget)
+{
+    juce::MessageManager::callAsync([physicalScreenBounds, safeTarget]
+    {
+        auto* dialog = safeTarget.getComponent();
+        if (dialog == nullptr || !dialog->isVisible())
+            return;
+        if (!physicalScreenBounds.isEmpty() && dialog->getFocusedEditor() == nullptr)
+            return;
+
+        juce::Rectangle<int> logicalBounds;
+        if (!physicalScreenBounds.isEmpty())
+        {
+            const auto& displays = juce::Desktop::getInstance().getDisplays();
+            const auto* display = displays.getDisplayForRect(physicalScreenBounds, true);
+            if (display == nullptr)
+                return;
+            logicalBounds = displays.physicalToLogical(physicalScreenBounds, display);
+        }
+        dialog->handleKeyboardOcclusionChanged(logicalBounds);
+    });
+}
+#endif
+
+void ResponsiveDialogWindow::handleKeyboardOcclusionChanged(juce::Rectangle<int> screenBounds)
+{
+    if (screenBounds.isEmpty())
+    {
+        if (!keyboardWasVisible)
+            return;
+        setBounds(boundsBeforeKeyboard);
+        viewport.setViewPosition(scrollPositionBeforeKeyboard);
+        keyboardWasVisible = false;
+        keyboardScreenBounds = {};
+        if (messageVisibleAfterKeyboardDismiss && messageLabel != nullptr)
+        {
+            messageVisibleAfterKeyboardDismiss = false;
+            messageVisible = true;
+            messageLabel->setVisible(true);
+            resized();
+
+            const int desiredHeight = contentHeight + titleAreaHeight()
+                + (buttons.empty() ? buttonToDialogBottomGap
+                                   : contentToButtonGap + dialogButtonHeight + buttonToDialogBottomGap);
+            const auto area = availableArea();
+            const auto* parent = getParentComponent();
+            const int availableHeight = parent != nullptr
+                ? juce::jmin(area.getHeight(), parent->getHeight())
+                : area.getHeight();
+            if (desiredHeight <= availableHeight)
+            {
+                setSize(getWidth(), desiredHeight);
+                if (parent != nullptr)
+                    setCentrePosition(parent->getLocalBounds().getCentre());
+                else
+                    setCentrePosition(area.getCentre());
+			}
+			else
+			{
+				messageVisible = false;
+				messageLabel->setVisible(false);
+				setBounds(boundsBeforeKeyboard);
+				resized();
+			}
+		}
+		return;
+    }
+
+    if (!keyboardWasVisible)
+    {
+        boundsBeforeKeyboard = getBounds();
+        scrollPositionBeforeKeyboard = viewport.getViewPosition();
+        keyboardWasVisible = true;
+    }
+    keyboardScreenBounds = screenBounds;
+
+    auto visibleArea = availableArea();
+#if JUCE_ANDROID
+    if (auto* parent = getParentComponent())
+    {
+        // Android may resize Activity content for the IME or keep it full-sized
+        // with edge-to-edge. Clip only in the latter case; do not subtract the
+        // same inset twice.
+        auto parentArea = parent->getLocalBounds();
+        const int keyboardTop = parent->getLocalPoint(nullptr, screenBounds.getTopLeft()).getY();
+        const auto parentBottomOnScreen = parent->localPointToGlobal(parentArea.getBottomLeft()).getY();
+        const bool parentAlreadyResized = parentBottomOnScreen <= screenBounds.getY() + 2;
+        if (!parentAlreadyResized)
+            parentArea.setBottom(juce::jlimit(parentArea.getY(), parentArea.getBottom(), keyboardTop));
+        visibleArea = parentArea.reduced(16);
+    }
+#endif
+    int minimumViewportHeight = 0;
+    int contentY = 8;
+    for (const auto& field : fields)
+    {
+        if (field.component == nullptr)
+            continue;
+        if (field.fillRemainingViewportHeight)
+            minimumViewportHeight = juce::jmax(minimumViewportHeight,
+                                               contentY + field.minimumHeight + field.spacingAfter + 8);
+        contentY += field.fillRemainingViewportHeight ? field.minimumHeight + field.spacingAfter
+                                                      : field.preferredHeight + field.spacingAfter;
+    }
+    const int footer = buttons.empty() ? 0 : dialogFooterHeight;
+    const int minimumDialogHeight = titleAreaHeight() + footer + dialogContentBottomMargin + minimumViewportHeight;
+    const int newHeight = juce::jmax(minimumDialogHeight,
+                                     juce::jmin(boundsBeforeKeyboard.getHeight(), visibleArea.getHeight()));
+    const int newWidth = juce::jmax(1, juce::jmin(boundsBeforeKeyboard.getWidth(), visibleArea.getWidth()));
+    setSize(newWidth, newHeight);
+    if (getParentComponent() != nullptr)
+        setCentrePosition(visibleArea.getCentre());
+    else
+        setTopLeftPosition(visibleArea.getCentreX() - newWidth / 2, visibleArea.getCentreY() - newHeight / 2);
+
+    if (auto* editor = getFocusedEditor())
+    {
+        const auto editorBounds = content.getLocalArea(editor, editor->getLocalBounds());
+        const int visibleTop = viewport.getViewPositionY();
+        const int visibleBottom = visibleTop + viewport.getHeight();
+        if (editorBounds.getBottom() > visibleBottom)
+            viewport.setViewPosition(0, editorBounds.getBottom() - viewport.getHeight());
+        else if (editorBounds.getY() < visibleTop)
+            viewport.setViewPosition(0, editorBounds.getY());
+    }
+}
+
+#if JUCE_ANDROID
+extern "C" JNIEXPORT void JNICALL
+Java_com_openagriculture_agisovirtualterminal_MainActivity_onImeInsetsChanged(JNIEnv*, jclass, jint bottomInsetPixels)
+{
+    ResponsiveDialogWindow::notifyAndroidKeyboardInset(bottomInsetPixels);
+}
+#endif

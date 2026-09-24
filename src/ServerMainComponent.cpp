@@ -1052,10 +1052,11 @@ void ServerMainComponent::resized()
 	menuBar.setBounds(menuBar.getBounds().withTrimmedRight(CAN_STATUS_INDICATOR_WIDTH));
 	logger.setSize(loggerViewport.getWidth(), logger.getHeight());
 
-	// Responsive dialogs are children of this component on Android. Their
-	// previous centre is not updated automatically when the Activity rotates.
+	// Keep Android child dialogs centred during ordinary parent resizes, but
+	// leave focused dialogs to their IME-aware layout controller.
 	const auto centreDialog = [this](juce::Component *dialog) {
-		if (dialog != nullptr && dialog->isVisible() && dialog->getParentComponent() == this)
+		if (dialog != nullptr && dialog->isVisible() && dialog->getParentComponent() == this
+		    && !dialog->hasKeyboardFocus(true))
 			dialog->setCentrePosition(getLocalBounds().getCentre());
 	};
 	centreDialog(aboutDialog.get());

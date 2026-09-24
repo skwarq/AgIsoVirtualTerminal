@@ -330,7 +330,8 @@ void DataMaskRenderAreaComponent::mouseUp(const MouseEvent &event)
 
 						if (clickedNumber->get_option2(isobus::InputNumber::Options2::Enabled))
 						{
-							inputNumberModal = std::make_unique<ResponsiveDialogWindow>("Input Number", "Enter a value for this input number, then press OK.");
+							inputNumberModal = std::make_unique<ResponsiveDialogWindow>("", "Enter a value for this input number, then press OK.");
+							inputNumberModal->setTitleVisible(false);
 
 							const auto scale = clickedNumber->get_scale();
 							const auto offset = clickedNumber->get_offset();
@@ -363,7 +364,18 @@ void DataMaskRenderAreaComponent::mouseUp(const MouseEvent &event)
 							// Seeded with what the object holds now, so confirming without typing
 							// anything cannot write a stale value from a previous edit
 							inputNumberListener.set_last_value(currentRawValue);
-							inputNumberModal->addCustomComponent(inputNumberKeypad.get(), inputNumberKeypad->getHeight(), 12, inputNumberKeypad->getWidth());
+							// Keep the value/range readout pinned while only the touch-key grid scrolls.
+							inputNumberModal->setVerticalScrollingEnabled(false);
+							inputNumberModal->addCustomComponent(inputNumberKeypad.get(), inputNumberKeypad->getHeight(),
+							                                             0, inputNumberKeypad->getWidth(), true, 42);
+							juce::Component::SafePointer<ResponsiveDialogWindow> safeDialog(inputNumberModal.get());
+							juce::Component::SafePointer<NumericKeypadComponent> safeKeypad(inputNumberKeypad.get());
+							inputNumberKeypad->setPreferredHeightChangedCallback([safeDialog, safeKeypad](int height)
+							{
+								if (auto* dialog = safeDialog.getComponent())
+									if (auto* keypad = safeKeypad.getComponent())
+										dialog->updateCustomComponentHeight(keypad, height);
+							});
 							auto canConfirmInputNumber = [this, clickedNumber, offset, scale]() {
 								if ((nullptr == inputNumberKeypad) || !inputNumberKeypad->can_confirm())
 								{
@@ -471,6 +483,9 @@ void DataMaskRenderAreaComponent::mouseUp(const MouseEvent &event)
 								ownerServer.process_macro(clickedNumber, isobus::EventID::OnInputFieldDeselection, isobus::VirtualTerminalObjectType::InputNumber, parentWorkingSet);
 							};
 							inputNumberModal->showModal(ownerServer, std::move(resultCallback));
+							if (inputNumberKeypad->usesSystemKeyboard())
+								inputNumberModal->setMessageVisibleAfterKeyboardDismiss(true);
+							inputNumberKeypad->activateSystemKeyboardIfNeeded();
 							ownerServer.send_select_input_object_message(clickedNumber->get_id(), true, true, ownerServer.get_client_control_function_for_working_set(parentWorkingSet));
 							if (parentWorkingSet)
 							{

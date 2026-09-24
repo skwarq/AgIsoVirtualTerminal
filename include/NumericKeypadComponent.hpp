@@ -50,6 +50,13 @@ public:
 	void paint(Graphics &graphics) override;
 
 	void resized() override;
+	/// @brief Focus the native numeric editor when the touch keypad does not fit.
+	bool usesSystemKeyboard() const noexcept { return useSystemKeyboard; }
+	static constexpr int SYSTEM_ENTRY_HEIGHT = 42;
+	static constexpr int SYSTEM_RANGE_HEIGHT = 24;
+	static constexpr int SYSTEM_DISPLAY_HEIGHT = SYSTEM_ENTRY_HEIGHT + SYSTEM_RANGE_HEIGHT;
+	void setPreferredHeightChangedCallback(std::function<void(int)> callback) { preferredHeightChanged = std::move(callback); }
+	void activateSystemKeyboardIfNeeded();
 
 private:
 	/// @brief Appends a character to what has been typed, if it makes sense to do so
@@ -61,6 +68,7 @@ private:
 
 	/// @brief Clears the entry back to empty
 	void clear();
+	void toggleSign();
 
 	/// @brief Redraws the entry and recolours it when the value is out of range
 	void refresh_display();
@@ -76,14 +84,21 @@ private:
 	static constexpr int DISPLAY_HEIGHT = 84; ///< Height of the entry and range readout
 	static constexpr int NUMBER_OF_COLUMNS = 4; ///< Digits take three columns, edit keys the fourth
 	static constexpr int NUMBER_OF_ROWS = 4; ///< Three digit rows plus the bottom row
+	static constexpr int FULL_KEYPAD_HEIGHT = DISPLAY_HEIGHT + (NUMBER_OF_ROWS * KEY_SIZE) + ((NUMBER_OF_ROWS + 1) * KEY_GAP);
 
 	OwnedArray<TextButton> keys;
+	juce::Viewport keysViewport;
+	juce::Component keysContent;
 	Label entryLabel;
 	Label rangeLabel;
+	TextEditor systemEntryEditor;
+	TextButton systemSignButton{ "-" };
 	String entry;
 	double minimum;
 	double maximum;
 	std::uint8_t decimals;
+	bool useSystemKeyboard = false;
+	std::function<void(int)> preferredHeightChanged;
 	bool hasTypedSinceOpening = false; ///< The keypad opens showing the object's current value, not something the operator typed. The first digit/decimal-point press should overwrite it rather than append to it, or an operator has to press Clear first to get the same result - see append().
 
 	JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(NumericKeypadComponent)

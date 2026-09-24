@@ -9,6 +9,8 @@ public:
 	                       const juce::String&, const juce::String&, const juce::Drawable*, const juce::Colour*) override;
 };
 
+struct PlatformKeyboardSubscription;
+
 /// A reusable modal dialog with an independent content area and button bar.
 /// The dialog owns its layout and never delegates geometry to AlertWindow.
 class ResponsiveDialogWindow : public juce::Component
@@ -36,16 +38,26 @@ public:
                                 const juce::String& label = {});
     juce::TextButton* addButton(const juce::String& name, int result,
                                 std::function<bool()> canClose = {});
-    void addCustomComponent(juce::Component* component, int preferredHeight = 34, int spacingAfter = 12, int preferredWidth = 0);
+    void addCustomComponent(juce::Component* component, int preferredHeight = 34, int spacingAfter = 12,
+                            int preferredWidth = 0, bool fillRemainingViewportHeight = false,
+                            int minimumHeight = 0);
     void updateCustomComponentHeight(juce::Component* component, int preferredHeight);
+    void setTitleVisible(bool visible);
     void setInfoIconVisible(bool visible);
     void setVerticalScrollingEnabled(bool enabled);
+    void setMessageVisibleAfterKeyboardDismiss(bool enabled);
 
     juce::String getTextEditorContents(const juce::String& key) const;
     juce::TextEditor* getTextEditor(const juce::String& key) const;
     juce::ComboBox* getComboBoxComponent(const juce::String& key) const;
 
     void showModal(juce::Component& parent, std::function<void(int)> callback);
+    static void notifyAndroidKeyboardInset(int bottomInsetPixels);
+#if JUCE_WINDOWS
+    static void notifyWindowsKeyboardOcclusion(
+        juce::Rectangle<int> physicalScreenBounds,
+        juce::Component::SafePointer<ResponsiveDialogWindow> target);
+#endif
     void close(int result);
     void resized() override;
     void paint(juce::Graphics&) override;
@@ -60,10 +72,16 @@ private:
         int preferredHeight = 34;
         int spacingAfter = 12;
         int preferredWidth = 0;
+        bool fillRemainingViewportHeight = false;
+        int minimumHeight = 0;
     };
 
     void layoutContent();
     juce::Rectangle<int> availableArea() const;
+    int titleAreaHeight() const noexcept { return titleVisible ? dialogTitleHeight : 0; }
+    void handleKeyboardOcclusionChanged(juce::Rectangle<int> screenBounds);
+    juce::Component* getFocusedEditor() const;
+    static ResponsiveDialogWindow* getFocusedKeyboardDialog();
 
     juce::String title;
     juce::String message;
@@ -79,8 +97,16 @@ private:
     CenteredPopupLookAndFeel centeredPopupLookAndFeel;
     int contentHeight = 0;
     bool infoIconVisible = false;
+    bool titleVisible = true;
     bool verticalScrollVisible = false;
+    bool messageVisible = true;
+    bool messageVisibleAfterKeyboardDismiss = false;
     bool verticalScrollingEnabled = true;
+    bool keyboardWasVisible = false;
+    juce::Rectangle<int> boundsBeforeKeyboard;
+    juce::Point<int> scrollPositionBeforeKeyboard;
+    juce::Rectangle<int> keyboardScreenBounds;
+    std::unique_ptr<PlatformKeyboardSubscription> keyboardSubscription;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ResponsiveDialogWindow)
 };
