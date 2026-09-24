@@ -7,10 +7,13 @@ project(juce_jni_project)
 
 set(BINARY_NAME "juce_jni")
 
+set(OBOE_DIR "../../../build/_deps/juce-src/modules/juce_audio_devices/native/oboe")
+add_subdirectory(${OBOE_DIR} ./oboe)
+
 add_library("cpufeatures" STATIC "${ANDROID_NDK}/sources/android/cpufeatures/cpu-features.c")
 set_source_files_properties("${ANDROID_NDK}/sources/android/cpufeatures/cpu-features.c" PROPERTIES COMPILE_FLAGS "-Wno-sign-conversion -Wno-gnu-statement-expression")
 
-add_definitions([[-DJUCE_MODULE_AVAILABLE_juce_audio_devices=1]] [[-DJUCE_USE_ANDROID_OBOE=0]] [[-DJUCE_USE_ANDROID_OPENSLES=0]] [[-DJUCE_ANDROID=1]] [[-DJUCE_ANDROID_API_VERSION=24]] [[-DJUCE_PUSH_NOTIFICATIONS=1]] [[-DJUCE_PUSH_NOTIFICATIONS_ACTIVITY="com/rmsl/juce/JuceActivity"]] [[-DJUCE_ANDROID_GL_ES_VERSION_3_0=1]] [[-DJUCER_ANDROIDSTUDIO_F2D62D05=1]] [[-DJUCE_APP_VERSION=1.5.1]] [[-DJUCE_APP_VERSION_HEX=0x10501]])
+add_definitions([[-DJUCE_MODULE_AVAILABLE_juce_audio_devices=1]] [[-DJUCE_USE_ANDROID_OBOE=1]] [[-DJUCE_USE_ANDROID_OPENSLES=0]] [[-DJUCE_USE_MP3AUDIOFORMAT=1]] [[-DJUCE_ANDROID=1]] [[-DJUCE_ANDROID_API_VERSION=24]] [[-DJUCE_PUSH_NOTIFICATIONS=1]] [[-DJUCE_PUSH_NOTIFICATIONS_ACTIVITY="com/rmsl/juce/JuceActivity"]] [[-DJUCE_ANDROID_GL_ES_VERSION_3_0=1]] [[-DJUCER_ANDROIDSTUDIO_F2D62D05=1]] [[-DJUCE_APP_VERSION=1.5.1]] [[-DJUCE_APP_VERSION_HEX=0x10501]])
 
 include_directories( AFTER
     "../../JuceLibraryCode"
@@ -46,6 +49,9 @@ endif()
 
 set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+# Android uses the application's TCP CAN plugin. CAN_Stack still builds its
+# SocketCAN backend, but Main.cpp does not instantiate it on Android.
+set(CAN_DRIVER "SocketCAN")
 add_subdirectory("../../../build/_deps/can_stack-src" "${CMAKE_CURRENT_BINARY_DIR}/can_stack-build")
 
 add_library( ${BINARY_NAME}
@@ -3000,6 +3006,7 @@ target_link_libraries( ${BINARY_NAME}
     ${glesv3}
     ${egl}
     "cpufeatures"
+    "oboe"
     isobus::Isobus
     isobus::HardwareIntegration
     isobus::Utility

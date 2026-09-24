@@ -60,7 +60,8 @@ juce_add_gui_app(
 set_target_properties(AgISOVirtualTerminal PROPERTIES CXX_STANDARD 17)
 
 target_compile_definitions(AgISOVirtualTerminal PRIVATE JUCE_USE_CURL=0
-                                                        JUCE_WEB_BROWSER=0)
+                                                        JUCE_WEB_BROWSER=0
+                                                        JUCE_USE_MP3AUDIOFORMAT=1)
 
 juce_generate_juce_header(AgISOVirtualTerminal)
 

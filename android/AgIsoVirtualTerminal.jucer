@@ -53,6 +53,7 @@
         <MODULEPATH id="juce_data_structures" path="../build/_deps/juce-src/modules"/>
         <MODULEPATH id="juce_core" path="../build/_deps/juce-src/modules"/>
         <MODULEPATH id="juce_audio_basics" path="../build/_deps/juce-src/modules"/>
+        <MODULEPATH id="juce_audio_devices" path="../build/_deps/juce-src/modules"/>
         <MODULEPATH id="juce_audio_utils" path="../build/_deps/juce-src/modules"/>
       </MODULEPATHS>
     </ANDROIDSTUDIO>
@@ -65,7 +66,8 @@
     <MODULE id="juce_gui_basics" showAllCode="1" useLocalCopy="0" includeBinaryInApp="1"/>
     <MODULE id="juce_gui_extra" showAllCode="1" useLocalCopy="0" includeBinaryInApp="1"/>
     <MODULE id="juce_audio_basics" showAllCode="1" useLocalCopy="0" includeBinaryInApp="1"/>
+    <MODULE id="juce_audio_devices" showAllCode="1" useLocalCopy="0" includeBinaryInApp="1"/>
     <MODULE id="juce_audio_utils" showAllCode="1" useLocalCopy="0" includeBinaryInApp="1"/>
   </MODULES>
-  <JUCEOPTIONS/>
+  <JUCEOPTIONS JUCE_USE_ANDROID_OBOE="1" JUCE_USE_MP3AUDIOFORMAT="1"/>
 </JUCERPROJECT>
