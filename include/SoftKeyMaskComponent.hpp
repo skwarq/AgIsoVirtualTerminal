@@ -45,10 +45,10 @@ public:
 	 */
 	int key_count() const;
 
-	int keyHeight = 60;
-	int keyWidth = 60;
+	int keyHeight = 75;
+	int keyWidth = 75;
 	int rowCount = 6;
-	int columnCount = 1;
+	int columnCount = 2;
 	int height = 480;
 };
 
