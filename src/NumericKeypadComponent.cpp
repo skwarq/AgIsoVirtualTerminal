@@ -210,6 +210,7 @@ void NumericKeypadComponent::resized()
 {
 	auto bounds = getLocalBounds();
 	auto displayArea = bounds.removeFromTop(DISPLAY_HEIGHT).reduced(KEY_GAP * 2, KEY_GAP);
+	const int columnWidth = juce::jmax(1, (getWidth() - ((NUMBER_OF_COLUMNS + 1) * KEY_GAP)) / NUMBER_OF_COLUMNS);
 
 	rangeLabel.setBounds(displayArea.removeFromBottom(18));
 	entryLabel.setBounds(displayArea);
@@ -223,7 +224,7 @@ void NumericKeypadComponent::resized()
 
 		for (int column = 0; column < NUMBER_OF_COLUMNS; column++)
 		{
-			keys[index]->setBounds(KEY_GAP + (column * (KEY_SIZE + KEY_GAP)), y, KEY_SIZE, KEY_SIZE);
+			keys[index]->setBounds(KEY_GAP + (column * (columnWidth + KEY_GAP)), y, columnWidth, KEY_SIZE);
 			index++;
 		}
 	}
@@ -231,7 +232,7 @@ void NumericKeypadComponent::resized()
 	// Bottom row: zero spans the first two columns, the decimal point sits in the third
 	const int lastRowY = bounds.getY() + KEY_GAP + ((NUMBER_OF_ROWS - 1) * (KEY_SIZE + KEY_GAP));
 
-	keys[index]->setBounds(KEY_GAP, lastRowY, (2 * KEY_SIZE) + KEY_GAP, KEY_SIZE);
+	keys[index]->setBounds(KEY_GAP, lastRowY, (2 * columnWidth) + KEY_GAP, KEY_SIZE);
 	index++;
-	keys[index]->setBounds(KEY_GAP + (2 * (KEY_SIZE + KEY_GAP)), lastRowY, KEY_SIZE, KEY_SIZE);
+	keys[index]->setBounds(KEY_GAP + (2 * (columnWidth + KEY_GAP)), lastRowY, columnWidth, KEY_SIZE);
 }

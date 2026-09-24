@@ -363,7 +363,7 @@ void DataMaskRenderAreaComponent::mouseUp(const MouseEvent &event)
 							// Seeded with what the object holds now, so confirming without typing
 							// anything cannot write a stale value from a previous edit
 							inputNumberListener.set_last_value(currentRawValue);
-							inputNumberModal->addCustomComponent(inputNumberKeypad.get(), inputNumberKeypad->getHeight());
+							inputNumberModal->addCustomComponent(inputNumberKeypad.get(), inputNumberKeypad->getHeight(), 12, inputNumberKeypad->getWidth());
 							auto canConfirmInputNumber = [this, clickedNumber, offset, scale]() {
 								if ((nullptr == inputNumberKeypad) || !inputNumberKeypad->can_confirm())
 								{

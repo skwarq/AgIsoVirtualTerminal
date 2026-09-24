@@ -36,7 +36,7 @@ public:
                                 const juce::String& label = {});
     juce::TextButton* addButton(const juce::String& name, int result,
                                 std::function<bool()> canClose = {});
-    void addCustomComponent(juce::Component* component, int preferredHeight = 34, int spacingAfter = 12);
+    void addCustomComponent(juce::Component* component, int preferredHeight = 34, int spacingAfter = 12, int preferredWidth = 0);
     void updateCustomComponentHeight(juce::Component* component, int preferredHeight);
     void setInfoIconVisible(bool visible);
     void setVerticalScrollingEnabled(bool enabled);
@@ -59,6 +59,7 @@ private:
         juce::Label* labelComponent = nullptr;
         int preferredHeight = 34;
         int spacingAfter = 12;
+        int preferredWidth = 0;
     };
 
     void layoutContent();

@@ -149,11 +149,11 @@ juce::TextButton* ResponsiveDialogWindow::addButton(const juce::String& name, in
     return raw;
 }
 
-void ResponsiveDialogWindow::addCustomComponent(juce::Component* component, int preferredHeight, int spacingAfter)
+void ResponsiveDialogWindow::addCustomComponent(juce::Component* component, int preferredHeight, int spacingAfter, int preferredWidth)
 {
     if (component == nullptr) return;
     content.addAndMakeVisible(*component);
-    fields.push_back({ "custom", {}, component, nullptr, preferredHeight, spacingAfter });
+    fields.push_back({ "custom", {}, component, nullptr, preferredHeight, spacingAfter, preferredWidth });
 }
 
 void ResponsiveDialogWindow::updateCustomComponentHeight(juce::Component* component, int preferredHeight)
@@ -227,6 +227,8 @@ void ResponsiveDialogWindow::showModal(juce::Component& parent, std::function<vo
     for (const auto& field : fields)
     {
         desiredWidth = juce::jmax(desiredWidth, measureTextWidth(field.label, 16.0f) + 48);
+        if (field.preferredWidth > 0)
+            desiredWidth = juce::jmax(desiredWidth, field.preferredWidth + 56);
         if (auto* editor = dynamic_cast<juce::TextEditor*>(field.component))
             desiredWidth = juce::jmax(desiredWidth, measureTextWidth(editor->getText(), 16.0f) + 48);
         if (auto* combo = dynamic_cast<juce::ComboBox*>(field.component))
@@ -334,7 +336,10 @@ void ResponsiveDialogWindow::layoutContent()
         }
         if (field.labelComponent == nullptr)
         {
-            field.component->setBounds(0, y, juce::jmax(1, viewport.getWidth() - 24), field.preferredHeight);
+            const int availableWidth = juce::jmax(1, viewport.getWidth() - 24);
+            const int componentWidth = field.preferredWidth > 0 ? juce::jmin(availableWidth, field.preferredWidth) : availableWidth;
+            const int componentX = (availableWidth - componentWidth) / 2;
+            field.component->setBounds(componentX, y, componentWidth, field.preferredHeight);
             y += field.preferredHeight + field.spacingAfter;
             continue;
         }
