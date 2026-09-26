@@ -12,6 +12,7 @@ class AckSettingsWindow;
 #include "SoftKeyMaskRenderAreaComponent.hpp"
 #include "VT_NumberComponent.hpp"
 #include "WorkingSetSelectorComponent.hpp"
+#include "VersionSnapshotAssembler.hpp"
 #include "isobus/isobus/isobus_diagnostic_protocol.hpp"
 #include "isobus/isobus/isobus_time_date_interface.hpp"
 #include "isobus/isobus/isobus_virtual_terminal_server.hpp"
@@ -61,7 +62,6 @@ public:
 	bool keyStateChanged(bool isKeyDown, juce::Component *originatingComponent) override;
 
 	std::vector<std::array<std::uint8_t, 7>> get_versions(isobus::NAME clientNAME) override;
-	void on_object_attribute_changed(isobus::NAME clientNAME, std::uint16_t objectID, std::uint8_t attributeID, std::uint32_t attributeData, std::optional<isobus::VirtualTerminalWorkingSetBase::IopObjectLocation> location) override;
 	std::vector<std::uint8_t> get_supported_objects() const override;
 
 	/// @brief This function is called when the client wants the server to load a previously stored object pool.
@@ -226,8 +226,6 @@ private:
 
 	static VTVersion get_version_from_setting(std::uint8_t aVersion);
 
-	std::size_t number_of_iop_files_in_directory(std::filesystem::path path);
-
 	bool timeAndDateCallback(isobus::TimeDateInterface::TimeAndDate &timeAndDateToPopulate);
 	void transferred_object_pool_parse_start(std::shared_ptr<isobus::VirtualTerminalServerManagedWorkingSet> &workingSet) const override;
 
@@ -300,8 +298,12 @@ private:
 	using SoftKeyAssignments = std::map<std::uint16_t, std::uint16_t>;
 	std::map<std::uint64_t, SoftKeyAssignments> activeSoftKeyAssignments;
 	std::map<std::uint64_t, SoftKeyAssignments> pendingSoftKeyAssignments;
-	std::map<std::uint64_t, std::map<std::uint16_t, std::uint8_t>> pendingFontTypeChanges;
-	std::mutex fontTypeChangesMutex;
+	struct PendingVersionSnapshot
+	{
+		VersionSnapshotAssembler assembler;
+	};
+	std::map<std::pair<std::uint64_t, std::string>, PendingVersionSnapshot> pendingVersionSnapshots;
+	std::mutex pendingVersionSnapshotsMutex;
 	std::set<const isobus::VirtualTerminalServerManagedWorkingSet *> initializedSoftKeyStateWorkingSets;
 	std::mutex softKeyStateMutex;
 	isobus::EventCallbackHandle softKeyMaskChangeListener = 0;

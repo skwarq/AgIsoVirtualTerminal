@@ -67,7 +67,9 @@ juce_generate_juce_header(AgISOVirtualTerminal)
 
 if(AGISO_BUILD_TESTING)
   find_package(GTest REQUIRED)
-  add_executable(SoftKeyMaskLayoutTests tests/SoftKeyMaskLayoutTests.cpp)
+  add_executable(SoftKeyMaskLayoutTests
+    tests/SoftKeyMaskLayoutTests.cpp
+    tests/VersionSnapshotAssemblerTests.cpp)
   target_include_directories(SoftKeyMaskLayoutTests PRIVATE ${CMAKE_CURRENT_LIST_DIR}/include)
   target_compile_features(SoftKeyMaskLayoutTests PRIVATE cxx_std_17)
   target_link_libraries(SoftKeyMaskLayoutTests PRIVATE GTest::gtest_main)

@@ -26,6 +26,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iterator>
+#include <limits>
 #include <sstream>
 
 namespace
@@ -39,6 +40,16 @@ std::string version_label_to_hex(const std::vector<std::uint8_t> &versionLabel)
 		result << std::setw(2) << static_cast<unsigned int>(byte);
 	}
 	return result.str();
+}
+
+bool write_file_atomically(const std::filesystem::path &destination, const std::vector<std::uint8_t> &data)
+{
+	if (data.empty())
+	{
+		return false;
+	}
+	const auto utf8Path = destination.u8string();
+	return File(String::fromUTF8(utf8Path.c_str())).replaceWithData(data.data(), data.size());
 }
 
 } // namespace
@@ -333,8 +344,12 @@ std::vector<std::array<std::uint8_t, 7>> ServerMainComponent::get_versions(isobu
 			if (iopxFile.is_open())
 			{
 				iopxFile.unsetf(std::ios::skipws);
-				std::array<std::uint8_t, 7> versionLabel;
-				iopxFile.read(reinterpret_cast<char *>(versionLabel.data()), 7);
+				std::array<std::uint8_t, 7> versionLabel{};
+				if (!iopxFile.read(reinterpret_cast<char *>(versionLabel.data()), static_cast<std::streamsize>(versionLabel.size())))
+				{
+					LOG_WARNING("[VT Server]: Ignoring truncated version file: %s", file.getFullPathName().toStdString().c_str());
+					continue;
+				}
 
 				// Only add the version label if it is not already in the list
 				bool versionAlreadyInList = false;
@@ -361,15 +376,6 @@ std::vector<std::array<std::uint8_t, 7>> ServerMainComponent::get_versions(isobu
 	return retVal;
 }
 
-void ServerMainComponent::on_object_attribute_changed(isobus::NAME clientNAME, std::uint16_t objectID, std::uint8_t attributeID, std::uint32_t attributeData, std::optional<isobus::VirtualTerminalWorkingSetBase::IopObjectLocation> location)
-{
-	if (attributeID == 3 && attributeData <= 0xFF)
-	{
-		const std::lock_guard<std::mutex> lock(fontTypeChangesMutex);
-		pendingFontTypeChanges[clientNAME.get_full_name()][objectID] = static_cast<std::uint8_t>(attributeData);
-	}
-}
-
 std::vector<std::uint8_t> ServerMainComponent::get_supported_objects() const
 {
 	// These are defined by ISO 11783-6 Table A.1 "Virtual terminal objects"
@@ -378,91 +384,58 @@ std::vector<std::uint8_t> ServerMainComponent::get_supported_objects() const
 
 std::vector<std::uint8_t> ServerMainComponent::load_version(const std::vector<std::uint8_t> &versionLabel, isobus::NAME clientNAME)
 {
-	{
-		const std::lock_guard<std::mutex> lock(fontTypeChangesMutex);
-		pendingFontTypeChanges.erase(clientNAME.get_full_name());
-	}
+	std::vector<std::uint8_t> loadedIOPData;
+	if (versionLabel.size() != 7) return loadedIOPData;
 
 	std::ostringstream nameString;
-	std::vector<std::uint8_t> loadedIOPData;
-	std::vector<std::uint8_t> loadedVersionLabel(7);
-	std::string path = (getAppDataDir() +
-	                    File::getSeparatorString() +
-	                    ISO_DATA_PATH +
-	                    File::getSeparatorString())
-	                     .toStdString();
-	nameString << std::hex << std::setfill('0') << std::setw(16) << clientNAME.get_full_name();
+	nameString << std::hex << std::setfill(char(48)) << std::setw(16) << clientNAME.get_full_name();
+	const auto basePath = (getAppDataDir() + File::getSeparatorString() + String(ISO_DATA_PATH) + File::getSeparatorString()).toStdString();
+	const auto clientDirectory = std::filesystem::path(basePath) / nameString.str();
+	const auto canonicalPath = clientDirectory / ("object_pool_snapshot_" + version_label_to_hex(versionLabel) + ".iopx");
+	auto readFile = [&versionLabel](const std::filesystem::path &filePath, std::vector<std::uint8_t> &data) {
+		std::ifstream input(filePath, std::ios::binary);
+		std::array<std::uint8_t, 7> label{};
+		if (!input.read(reinterpret_cast<char *>(label.data()), static_cast<std::streamsize>(label.size())) || !std::equal(label.begin(), label.end(), versionLabel.begin())) return false;
+		std::vector<std::uint8_t> contents(std::istreambuf_iterator<char>(input), {});
+		if (input.bad() || contents.empty()) return false;
+		data = std::move(contents);
+		return true;
+	};
 
-	if ((std::filesystem::is_directory(path + nameString.str()) ||
-	     std::filesystem::exists(path + nameString.str())) &&
-	    (7 == versionLabel.size()))
+	const bool haveCanonicalSnapshot = readFile(canonicalPath, loadedIOPData);
+	std::error_code directoryError;
+	const bool clientDirectoryExists = std::filesystem::is_directory(clientDirectory, directoryError);
+	if (directoryError) LOG_WARNING("[VT Server]: Could not inspect client data directory: %s", directoryError.message().c_str());
+	if (!haveCanonicalSnapshot && clientDirectoryExists)
 	{
-		std::vector<std::filesystem::path> iopxFiles;
-		for (const auto &entry : std::filesystem::directory_iterator(path + nameString.str()))
+		std::vector<std::filesystem::path> legacyFiles;
+		std::error_code iteratorError;
+		for (std::filesystem::directory_iterator it(clientDirectory, iteratorError), end; it != end && !iteratorError; it.increment(iteratorError))
 		{
-			if (entry.path().has_extension() && entry.path().extension() == ".iopx")
-			{
-				iopxFiles.push_back(entry.path());
-			}
+			if (it->path().extension() == ".iopx") legacyFiles.push_back(it->path());
 		}
-
-		// directory_iterator does not guarantee ordering. The files are individual IOP
-		// components and must be concatenated in the order in which they were stored.
-		std::sort(iopxFiles.begin(), iopxFiles.end(), [](const auto &left, const auto &right) {
-			const auto leftName = left.stem().string();
-			const auto rightName = right.stem().string();
-			const auto leftSeparator = leftName.find_last_of('_');
-			const auto rightSeparator = rightName.find_last_of('_');
-			if ((leftSeparator != std::string::npos) && (rightSeparator != std::string::npos))
-			{
-				try
-				{
-					const auto leftIndex = std::stoull(leftName.substr(leftSeparator + 1));
-					const auto rightIndex = std::stoull(rightName.substr(rightSeparator + 1));
-					if (leftIndex != rightIndex)
-					{
-						return leftIndex < rightIndex;
-					}
-				}
-				catch (const std::exception &)
-				{
-					// Fall back to a stable lexical order for unexpected filenames.
-				}
-			}
-			return left.string() < right.string();
+		if (iteratorError) LOG_WARNING("[VT Server]: Failed enumerating legacy IOP files: %s", iteratorError.message().c_str());
+		std::sort(legacyFiles.begin(), legacyFiles.end(), [](const auto &left, const auto &right) {
+			auto index = [](const std::filesystem::path &path) {
+				const auto stem = path.stem().string();
+				const auto separator = stem.find_last_of(char(95));
+				if (separator == std::string::npos) return std::numeric_limits<std::uint64_t>::max();
+				try { return static_cast<std::uint64_t>(std::stoull(stem.substr(separator + 1))); }
+				catch (const std::exception &) { return std::numeric_limits<std::uint64_t>::max(); }
+			};
+			const auto leftIndex = index(left);
+			const auto rightIndex = index(right);
+			return leftIndex == rightIndex ? left.string() < right.string() : leftIndex < rightIndex;
 		});
-
-		for (const auto &filePath : iopxFiles)
+		for (const auto &file : legacyFiles)
 		{
-			std::ifstream iopxFile(filePath, std::ios::binary);
-
-				if (iopxFile.is_open())
-				{
-					iopxFile.unsetf(std::ios::skipws);
-					iopxFile.read(reinterpret_cast<char *>(loadedVersionLabel.data()), 7);
-
-					if (7 == loadedVersionLabel.size())
-					{
-						bool versionMatches = true;
-						for (std::uint8_t i = 0; i < 7; i++)
-						{
-							if (loadedVersionLabel.at(i) != versionLabel.at(i))
-							{
-								versionMatches = false;
-								break;
-							}
-						}
-
-						if (versionMatches)
-						{
-							iopxFile.seekg(7, std::ios::beg);
-							std::vector<std::uint8_t> componentData(std::istreambuf_iterator<char>(iopxFile), {});
-			loadedIOPData.insert(loadedIOPData.end(), componentData.begin(), componentData.end());
-						}
-					}
-				}
-			}
+			// The canonical file is not a legacy component; never concatenate it
+			// with stale per-component files if it is corrupt or has a bad label.
+			if (file == canonicalPath) continue;
+			std::vector<std::uint8_t> component;
+			if (readFile(file, component)) loadedIOPData.insert(loadedIOPData.end(), component.begin(), component.end());
 		}
+	}
 
 	SoftKeyAssignments assignments;
 	const auto statePath = soft_key_state_path(versionLabel, clientNAME);
@@ -473,128 +446,141 @@ std::vector<std::uint8_t> ServerMainComponent::load_version(const std::vector<st
 		std::uint32_t softKeyMask = 0;
 		while (stateFile >> dataOrAlarmMask >> softKeyMask)
 		{
-			if ((dataOrAlarmMask <= 0xFFFF) && (softKeyMask <= 0xFFFF))
-			{
-				assignments[static_cast<std::uint16_t>(dataOrAlarmMask)] = static_cast<std::uint16_t>(softKeyMask);
-			}
+			if (dataOrAlarmMask <= 0xFFFF && softKeyMask <= 0xFFFF) assignments[static_cast<std::uint16_t>(dataOrAlarmMask)] = static_cast<std::uint16_t>(softKeyMask);
 		}
 	}
 	LOG_INFO("[VT] Loaded %zu Soft Key assignments from %s", assignments.size(), statePath.string().c_str());
-
 	{
 		const std::lock_guard<std::mutex> lock(softKeyStateMutex);
-		if (loadedIOPData.empty())
-		{
-			pendingSoftKeyAssignments.erase(clientNAME.get_full_name());
-		}
-		else
-		{
-			pendingSoftKeyAssignments[clientNAME.get_full_name()] = std::move(assignments);
-		}
+		if (loadedIOPData.empty()) pendingSoftKeyAssignments.erase(clientNAME.get_full_name());
+		else pendingSoftKeyAssignments[clientNAME.get_full_name()] = std::move(assignments);
 	}
 	return loadedIOPData;
 }
 
 bool ServerMainComponent::save_version(const std::vector<std::uint8_t> &objectPool, const std::vector<std::uint8_t> &versionLabel, isobus::NAME clientNAME)
 {
-	bool retVal = false;
-	std::vector<std::uint8_t> objectPoolToSave = objectPool;
+	if (versionLabel.size() != 7) return false;
+	const auto key = std::make_pair(clientNAME.get_full_name(), std::string(versionLabel.begin(), versionLabel.end()));
+	auto discardPendingSnapshot = [this, &key]() {
+		const std::lock_guard<std::mutex> lock(pendingVersionSnapshotsMutex);
+		pendingVersionSnapshots.erase(key);
+	};
+	std::vector<std::uint8_t> componentToSave = objectPool;
+	const auto workingSet = std::find_if(managedWorkingSetList.begin(), managedWorkingSetList.end(), [&clientNAME](const auto &candidate) {
+		return candidate && candidate->get_control_function() && candidate->get_control_function()->get_NAME() == clientNAME;
+	});
+	if (workingSet == managedWorkingSetList.end())
 	{
-		const std::lock_guard<std::mutex> lock(fontTypeChangesMutex);
-		const auto clientChanges = pendingFontTypeChanges.find(clientNAME.get_full_name());
-		if (clientChanges != pendingFontTypeChanges.end())
+		discardPendingSnapshot();
+		return false;
+	}
+	auto &currentWorkingSet = **workingSet;
+	const auto componentCount = currentWorkingSet.get_number_iop_files();
+	std::size_t componentIndex = componentCount;
+	for (std::size_t index = 0; index < componentCount; ++index)
+	{
+		if (&currentWorkingSet.get_iop_raw_data(index) == &objectPool) { componentIndex = index; break; }
+	}
+	if (componentCount == 0 || componentIndex == componentCount)
+	{
+		discardPendingSnapshot();
+		return false;
+	}
+
+	for (const auto &[objectID, object] : currentWorkingSet.get_object_tree())
+	{
+		if (!object || object->get_object_type() != isobus::VirtualTerminalObjectType::FontAttributes) continue;
+		const auto location = currentWorkingSet.get_iop_object_location(objectID);
+		constexpr std::size_t fontObjectSize = 7;
+		if (!location)
 		{
-			for (std::size_t i = 0; i + 5 < objectPoolToSave.size(); ++i)
+			discardPendingSnapshot();
+			LOG_ERROR("[VT Server]: FontAttributes object %u has no raw IOP location", static_cast<unsigned int>(objectID));
+			return false;
+		}
+		if (location->componentIndex != componentIndex) continue;
+		if (location->offset > componentToSave.size() || componentToSave.size() - location->offset < fontObjectSize)
+		{
+			discardPendingSnapshot();
+			return false;
+		}
+		const auto offset = location->offset;
+		const auto storedID = static_cast<std::uint16_t>(componentToSave[offset]) | (static_cast<std::uint16_t>(componentToSave[offset + 1]) << 8);
+		if (storedID != objectID || componentToSave[offset + 2] != static_cast<std::uint8_t>(isobus::VirtualTerminalObjectType::FontAttributes))
+		{
+			discardPendingSnapshot();
+			return false;
+		}
+		const auto font = std::static_pointer_cast<isobus::FontAttributes>(object);
+		componentToSave[offset + 3] = font->get_colour();
+		componentToSave[offset + 4] = static_cast<std::uint8_t>(font->get_size());
+		componentToSave[offset + 5] = static_cast<std::uint8_t>(font->get_type());
+		componentToSave[offset + 6] = font->get_style();
+	}
+
+	std::vector<std::uint8_t> fullPool;
+	{
+		const std::lock_guard<std::mutex> lock(pendingVersionSnapshotsMutex);
+		if (componentIndex == 0)
+		{
+			for (auto it = pendingVersionSnapshots.begin(); it != pendingVersionSnapshots.end();)
 			{
-				const auto objectID = static_cast<std::uint16_t>(objectPoolToSave[i]) |
-				  (static_cast<std::uint16_t>(objectPoolToSave[i + 1]) << 8);
-				if (objectPoolToSave[i + 2] != 23)
-				{
-					continue;
-				}
-				const auto change = clientChanges->second.find(objectID);
-				if (change != clientChanges->second.end())
-				{
-					objectPoolToSave[i + 5] = change->second;
-				}
+				if (it->first.first == clientNAME.get_full_name()) it = pendingVersionSnapshots.erase(it);
+				else ++it;
 			}
+			PendingVersionSnapshot pending;
+			if (!pending.assembler.reset(componentCount)) return false;
+			pendingVersionSnapshots[key] = std::move(pending);
 		}
+		auto pending = pendingVersionSnapshots.find(key);
+		if (pending == pendingVersionSnapshots.end() || !pending->second.assembler.set_component(componentIndex, std::move(componentToSave)))
+		{
+			pendingVersionSnapshots.erase(key);
+			return false;
+		}
+		if (!pending->second.assembler.complete()) return true;
+		if (!pending->second.assembler.assemble(fullPool))
+		{
+			pendingVersionSnapshots.erase(pending);
+			return false;
+		}
+		pendingVersionSnapshots.erase(pending);
 	}
-	std::string path = (getAppDataDir() +
-	                    File::getSeparatorString() +
-	                    String(ISO_DATA_PATH))
-	                     .toStdString();
 
-	// Main saved data folder
-	if (!std::filesystem::is_directory(path) || !std::filesystem::exists(path))
-	{
-		std::filesystem::create_directory(path);
-	}
-
-	// NAME specific folder
 	std::ostringstream nameString;
-	nameString << std::hex << std::setfill('0') << std::setw(16) << clientNAME.get_full_name();
+	nameString << std::hex << std::setfill(char(48)) << std::setw(16) << clientNAME.get_full_name();
+	const auto baseDirectory = std::filesystem::path((getAppDataDir() + File::getSeparatorString() + String(ISO_DATA_PATH)).toStdString());
+	const auto clientDirectory = baseDirectory / nameString.str();
+	std::error_code filesystemError;
+	std::filesystem::create_directories(clientDirectory, filesystemError);
+	if (filesystemError) return false;
+	const auto labelHex = version_label_to_hex(versionLabel);
+	const auto snapshotPath = clientDirectory / ("object_pool_snapshot_" + labelHex + ".iopx");
+	std::vector<std::uint8_t> labelledData;
+	labelledData.reserve(versionLabel.size() + fullPool.size());
+	labelledData.insert(labelledData.end(), versionLabel.begin(), versionLabel.end());
+	labelledData.insert(labelledData.end(), fullPool.begin(), fullPool.end());
+	if (!write_file_atomically(snapshotPath, labelledData)) return false;
 
-	if (!std::filesystem::is_directory(path + "/" + nameString.str()) || !std::filesystem::exists(path + "/" + nameString.str()))
-	{ // Check if src folder exists
-		std::filesystem::create_directory(path + "/" + nameString.str()); // create src folder
-	}
-
-	// A Store Version request may contain the same complete Object Pool more than once.
-	// Do not append an identical component for the same version label: loading all saved
-	// components later would parse the same objects repeatedly and can overwrite their state.
-	for (const auto &entry : std::filesystem::directory_iterator(path + "/" + nameString.str()))
+	std::error_code iteratorError;
+	std::vector<std::filesystem::path> legacyFilesToRemove;
+	for (std::filesystem::directory_iterator it(clientDirectory, iteratorError), end; it != end && !iteratorError; it.increment(iteratorError))
 	{
-		if (!entry.path().has_extension() || entry.path().extension() != ".iopx")
-		{
-			continue;
-		}
-
-		std::ifstream existingFile(entry.path(), std::ios::binary);
-		if (!existingFile.is_open())
-		{
-			continue;
-		}
-
-		std::vector<std::uint8_t> existingVersionLabel(versionLabel.size());
-		existingFile.read(reinterpret_cast<char *>(existingVersionLabel.data()), static_cast<std::streamsize>(existingVersionLabel.size()));
-		if (existingFile.gcount() != static_cast<std::streamsize>(versionLabel.size()) || existingVersionLabel != versionLabel)
-		{
-			continue;
-		}
-
-		std::vector<std::uint8_t> existingObjectPool(std::istreambuf_iterator<char>(existingFile), {});
-		if (existingObjectPool.size() == objectPoolToSave.size() &&
-		    std::equal(existingObjectPool.begin(), existingObjectPool.end(), objectPoolToSave.begin(), [](std::uint8_t existingByte, std::uint8_t newByte) {
-			    return existingByte == newByte;
-		    }))
-		{
-			LOG_INFO("[VT Server]: Skipping duplicate Object Pool component %s for version %s", entry.path().filename().string().c_str(), version_label_to_hex(versionLabel).c_str());
-			save_soft_key_masks(versionLabel, clientNAME);
-			return true;
-		}
+		if (it->path().extension() != ".iopx" || it->path() == snapshotPath) continue;
+		std::ifstream oldFile(it->path(), std::ios::binary);
+		std::array<std::uint8_t, 7> oldLabel{};
+		if (oldFile.read(reinterpret_cast<char *>(oldLabel.data()), static_cast<std::streamsize>(oldLabel.size())) && std::equal(oldLabel.begin(), oldLabel.end(), versionLabel.begin())) legacyFilesToRemove.push_back(it->path());
 	}
-
-	std::ofstream iopxFile(path + "/" + nameString.str() + "/object_pool_with_label_" + std::to_string(number_of_iop_files_in_directory(path + "/" + nameString.str())) + ".iopx", std::ios::trunc | std::ios::binary);
-	std::ofstream iopFile(path + "/" + nameString.str() + "/object_pool_" + std::to_string(number_of_iop_files_in_directory(path + "/" + nameString.str())) + ".iop", std::ios::trunc | std::ios::binary);
-
-	if (iopxFile.is_open())
+	if (iteratorError) LOG_WARNING("[VT Server]: Could not enumerate legacy files: %s", iteratorError.message().c_str());
+	for (const auto &oldPath : legacyFilesToRemove)
 	{
-		iopxFile.write(reinterpret_cast<const char *>(versionLabel.data()), static_cast<std::streamsize>(versionLabel.size()));
-		iopxFile.write(reinterpret_cast<const char *>(objectPoolToSave.data()), static_cast<std::streamsize>(objectPoolToSave.size()));
-		iopxFile.close();
-		retVal = true;
+		std::error_code removeError;
+		std::filesystem::remove(oldPath, removeError);
+		if (removeError) LOG_WARNING("[VT Server]: New snapshot committed, but legacy file cleanup failed: %s", removeError.message().c_str());
 	}
-	if (iopFile.is_open())
-	{
-		iopFile.write(reinterpret_cast<const char *>(objectPoolToSave.data()), static_cast<std::streamsize>(objectPoolToSave.size()));
-		iopFile.close();
-	}
-	if (retVal)
-	{
-		save_soft_key_masks(versionLabel, clientNAME);
-	}
-	return retVal;
+	save_soft_key_masks(versionLabel, clientNAME);
+	return true;
 }
 
 bool ServerMainComponent::delete_version(const std::vector<std::uint8_t> &versionLabel, isobus::NAME clientNAME)
@@ -1975,19 +1961,6 @@ ServerMainComponent::VTVersion ServerMainComponent::get_version_from_setting(std
 	return retVal;
 }
 
-std::size_t ServerMainComponent::number_of_iop_files_in_directory(std::filesystem::path path)
-{
-	std::size_t retVal = 0;
-
-	for (const auto &entry : std::filesystem::directory_iterator(path))
-	{
-		if (entry.path().has_extension() && entry.path().extension() == ".iop")
-		{
-			retVal++;
-		}
-	}
-	return retVal;
-}
 
 bool ServerMainComponent::timeAndDateCallback(isobus::TimeDateInterface::TimeAndDate &timeAndDate)
 {
