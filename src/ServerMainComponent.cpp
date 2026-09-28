@@ -127,8 +127,9 @@ ServerMainComponent::ServerMainComponent(
 
 	// Make sure you set the size of the component after
 	// you add any child components.
+	const auto menuBarHeight = juce::LookAndFeel::getDefaultLookAndFeel().getDefaultMenuBarHeight();
 	setSize(juce::roundToInt(WorkingSetSelectorComponent::WIDTH * working_set_selector_scale()) + juce::roundToInt((get_data_mask_area_size_x_pixels() + softKeyMaskDimensions.total_width()) * display_scale()),
-	        minimum_height() + LoggerComponent::HEIGHT);
+	        menuBarHeight + minimum_height() + LoggerComponent::HEIGHT);
 
 	const int contentTop = juce::LookAndFeel::getDefaultLookAndFeel().getDefaultMenuBarHeight();
 	workingSetSelector.setTopLeftPosition(0, contentTop);
@@ -1036,7 +1037,7 @@ void ServerMainComponent::resized()
 	                            scaledDataMask.getWidth() / 2,
 	                            (scaledDataMask.getHeight() / 10) * 8);
 	loggerViewport.setBounds(0,
-	                         minimum_height(),
+	                         menuBarHeight + minimum_height(),
 	                         getWidth(),
 	                         loggerViewport.isVisible() ? LoggerComponent::HEIGHT : 0);
 	menuBar.setBounds(0, 0, getWidth(), menuBarHeight);
@@ -2786,8 +2787,9 @@ int ServerMainComponent::minimum_height() const
 
 void ServerMainComponent::apply_display_size()
 {
+	const auto menuBarHeight = juce::LookAndFeel::getDefaultLookAndFeel().getDefaultMenuBarHeight();
 	setSize(juce::roundToInt(WorkingSetSelectorComponent::WIDTH * working_set_selector_scale()) + juce::roundToInt((get_data_mask_area_size_x_pixels() + softKeyMaskDimensions.total_width()) * display_scale()),
-	        minimum_height() + LoggerComponent::HEIGHT);
+	        menuBarHeight + minimum_height() + LoggerComponent::HEIGHT);
 
 	// When fitting to the window, the window is the input rather than the output, so it is left
 	// exactly as the operator sized it
