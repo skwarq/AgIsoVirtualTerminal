@@ -10,6 +10,7 @@
 #include "JuceManagedWorkingSetCache.hpp"
 #include "NumericValueUtils.hpp"
 #include "ServerMainComponent.hpp"
+#include "StringDrawingComponent.hpp"
 
 DataMaskRenderAreaComponent::DataMaskRenderAreaComponent(ServerMainComponent &parentServer) :
   ownerServer(parentServer)
@@ -241,41 +242,31 @@ void DataMaskRenderAreaComponent::mouseUp(const MouseEvent &event)
 										auto text = "Object " + std::to_string(clickedList->get_child_id(static_cast<std::uint16_t>(i)));
 										if (child->get_object_type() == isobus::VirtualTerminalObjectType::OutputString)
 										{
-											text = std::static_pointer_cast<isobus::OutputString>(child)->displayed_value(parentWorkingSet->get_object_tree());
+											auto outputString = std::static_pointer_cast<isobus::OutputString>(child);
+											const auto displayedValue = outputString->displayed_value(parentWorkingSet->get_object_tree());
+											text = StringDrawingComponent::decodeVTString(parentWorkingSet, *outputString, displayedValue).toStdString();
 										}
 
-										comboPopup->addCustomItem(i + 1, *currentModalComponentCache.back().get(), currentModalComponentCache.back()->getWidth(), currentModalComponentCache.back()->getHeight(), true, nullptr, text);
+										const auto itemID = static_cast<int>(i + 1);
+										comboPopup->addCustomItem(itemID, *currentModalComponentCache.back().get(), currentModalComponentCache.back()->getWidth(), currentModalComponentCache.back()->getHeight(), true, nullptr, text);
 									}
 								}
 							}
 
-							if (selectedIndex != -1)
+							if ((selectedIndex >= 0) && (selectedIndex < clickedList->get_number_children()))
 							{
-								combo->setSelectedItemIndex(selectedIndex);
+								// Menu item IDs preserve the original Input List index, including
+								// gaps caused by null or unresolved child references.
+								combo->setSelectedId(selectedIndex + 1, dontSendNotification);
 							}
 
 							inputListModal->addButton("OK", 0);
 							auto resultCallback = [this, clickedList](int result) {
 								auto inputCombo = inputListModal->getComboBoxComponent("Input List Combo");
-								result = inputCombo->getSelectedItemIndex();
+								const auto selectedItemID = inputCombo->getSelectedId();
+								result = selectedItemID > 0 ? selectedItemID - 1 : -1;
 
-								// Remap the visible index to the actual index
-								std::uint16_t numberOfNonNullsSeen = 0;
-								for (std::uint16_t i = 0; i < clickedList->get_number_children(); i++)
-								{
-									if (isobus::NULL_OBJECT_ID != clickedList->get_child_id(i))
-									{
-										numberOfNonNullsSeen++;
-									}
-
-									if (numberOfNonNullsSeen == result + 1)
-									{
-										result = i;
-										break;
-									}
-								}
-
-								if (isobus::NULL_OBJECT_ID != clickedList->get_variable_reference())
+								if (result >= 0 && isobus::NULL_OBJECT_ID != clickedList->get_variable_reference())
 								{
 									auto child = clickedList->get_object_by_id(clickedList->get_variable_reference(), parentWorkingSet->get_object_tree());
 
@@ -292,7 +283,7 @@ void DataMaskRenderAreaComponent::mouseUp(const MouseEvent &event)
 										}
 									}
 								}
-								else
+								else if (result >= 0)
 								{
 									ownerServer.process_macro(clickedList, isobus::EventID::OnEntryOfAValue, isobus::VirtualTerminalObjectType::InputList, parentWorkingSet);
 									if (clickedList->get_value() != result)

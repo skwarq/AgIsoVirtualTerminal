@@ -19,6 +19,45 @@ StringDrawingComponent::StringDrawingComponent(std::shared_ptr<isobus::VirtualTe
 {
 }
 
+String StringDrawingComponent::decodeVTString(const std::shared_ptr<isobus::VirtualTerminalServerManagedWorkingSet> &workingSet,
+                                              const isobus::StringVTObject &sourceString,
+                                              const std::string &text)
+{
+	String decodedValue(text);
+	if (text.size() >= 2 &&
+	    0xFF == static_cast<std::uint8_t>(text[0]) &&
+	    0xFE == static_cast<std::uint8_t>(text[1]))
+	{
+		// A BOM marks UTF-16LE and takes precedence over Font Attributes.
+		auto utf16Text = text;
+		if (0 != (utf16Text.size() % 2))
+		{
+			utf16Text.pop_back();
+		}
+		return String::createStringFromData(utf16Text.data(), static_cast<int>(utf16Text.size()));
+	}
+
+	auto fontType = isobus::FontAttributes::FontType::ISO8859_1;
+	const auto fontAttributesID = sourceString.get_font_attributes();
+	if (isobus::NULL_OBJECT_ID != fontAttributesID && nullptr != workingSet)
+	{
+		auto fontObject = workingSet->get_object_by_id(fontAttributesID);
+		if (fontObject != nullptr && isobus::VirtualTerminalObjectType::FontAttributes == fontObject->get_object_type())
+		{
+			fontType = std::static_pointer_cast<isobus::FontAttributes>(fontObject)->get_type();
+		}
+	}
+
+	const auto encoding = StringDrawingComponent::fontTypeToEncodingMap.find(fontType);
+	if (encoding != StringDrawingComponent::fontTypeToEncodingMap.end())
+	{
+		std::string utf8Text;
+		convert_string_to_utf_8(encoding->second, text, utf8Text, sourceString.get_option(isobus::StringVTObject::Options::AutoWrap));
+		decodedValue = String::fromUTF8(utf8Text.c_str(), static_cast<int>(utf8Text.size()));
+	}
+	return decodedValue;
+}
+
 void StringDrawingComponent::paintString(Graphics &g, const std::string &text, bool enabled)
 {
 	bool strikeThrough = false;
@@ -31,7 +70,6 @@ void StringDrawingComponent::paintString(Graphics &g, const std::string &text, b
 	auto sourceString = static_cast<const isobus::StringVTObject *>(vtObject());
 
 	std::uint8_t fontHeight = 8;
-	auto fontType = isobus::FontAttributes::FontType::ISO8859_1;
 	auto fontAttrID = sourceString->get_font_attributes();
 
 	// Get font data
@@ -51,35 +89,10 @@ void StringDrawingComponent::paintString(Graphics &g, const std::string &text, b
 			strikeThrough = font->get_style(isobus::FontAttributes::FontStyleBits::CrossedOut);
 			auto colour = parentWorkingSet->get_colour(font->get_colour());
 			drawColour = Colour::fromFloatRGBA(colour.r, colour.g, colour.b, 1.0f);
-			fontType = font->get_type();
 		}
 	}
 
-	std::string value = text;
-	String decodedValue(value);
-
-	if ((value.length() >= 2) &&
-	    (0xFF == static_cast<std::uint8_t>(value.at(0))) &&
-	    (0xFE == static_cast<std::uint8_t>(value.at(1))))
-	{
-		// String is UTF-16 encoded, font type is ignored.
-		if (0 != (value.length() % 2))
-		{
-			// If the length attribute does not indicate an even number of bytes the last byte is ignored
-			value.pop_back();
-		}
-		decodedValue = String::createStringFromData(value.c_str(), value.size());
-	}
-	else
-	{
-		auto it = fontTypeToEncodingMap.find(fontType);
-		if (it != fontTypeToEncodingMap.end())
-		{
-			std::string utf8String;
-			convert_string_to_utf_8(it->second, value, utf8String, sourceString->get_option(isobus::StringVTObject::Options::AutoWrap));
-			decodedValue = utf8String;
-		}
-	}
+	const auto decodedValue = decodeVTString(parentWorkingSet, *sourceString, text);
 
 	if (!sourceString->get_option(isobus::StringVTObject::Options::Transparent))
 	{

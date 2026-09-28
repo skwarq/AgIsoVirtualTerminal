@@ -16,6 +16,10 @@ class StringDrawingComponent : public TextDrawingComponent
 public:
 	StringDrawingComponent(std::shared_ptr<isobus::VirtualTerminalServerManagedWorkingSet> workingSet);
 
+	static juce::String decodeVTString(const std::shared_ptr<isobus::VirtualTerminalServerManagedWorkingSet> &workingSet,
+	                                   const isobus::StringVTObject &sourceString,
+	                                   const std::string &text);
+
 	void paintString(Graphics &g, const std::string &text, bool enabled = true);
 
 private:
